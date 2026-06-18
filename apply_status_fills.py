@@ -29,9 +29,12 @@ _NO_FILL = PatternFill(fill_type=None)
 def _status_fill(value):
     if not value:
         return _NO_FILL
-    if str(value).startswith("Allocated"):
+    s = str(value)
+    if s.startswith("Allocated"):
         return _FILLS["Allocated"]
-    return _FILLS.get(str(value), _NO_FILL)
+    if s.startswith("Pre-Sale"):
+        return _FILLS["Pre-Sale"]
+    return _FILLS.get(s, _NO_FILL)
 
 
 def apply_fills(ws):
