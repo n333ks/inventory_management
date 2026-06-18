@@ -1,6 +1,7 @@
 import argparse
 import csv
 from openpyxl import load_workbook
+from apply_status_fills import apply_fills
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 MANIFEST_FILE  = "container_manifest.csv"
@@ -173,6 +174,7 @@ def main():
     print(f"Processing container: {args.container}\n")
     unmatched = update_inventory(manifest_items, ws, args.container)
 
+    apply_fills(ws)
     wb.save(args.inventory)
     print(f"\nSaved updates to {args.inventory}")
 

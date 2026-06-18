@@ -24,6 +24,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.utils import get_column_letter
 from fix_inventory_formatting import apply_design_block_borders
+from apply_status_fills import apply_fills
 
 INVENTORY_FILE = "inventory_master.xlsx"
 
@@ -253,6 +254,7 @@ def build_new_workbook(variants_ordered, variant_optimal, variant_serials):
     # Design-block borders (medium outer border per Design Name group)
     apply_design_block_borders(ws)
 
+    apply_fills(ws)
     wb.save(INVENTORY_FILE)
     return last_data_row
 
