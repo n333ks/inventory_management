@@ -195,17 +195,12 @@ def process_manifest(ws, manifest_rows, container_id):
         else:
             new_items.append((key, serials, pre_sale_status))
 
-    # ── Matched: update In Production rows in place ────────────────────────────
+    # ── Matched: update In Production rows in place; queue excess as inserts ──────
     for key, serials in matched_items:
         prod_rows = in_production_rows(ws, variant_rows[key])
-        qty = len(serials)
+        to_fill   = min(len(prod_rows), len(serials))
 
-        if len(prod_rows) != qty:
-            print(f"  WARNING: {key[0]} {key[1]} — manifest has {qty} serial(s) "
-                  f"but {len(prod_rows)} In Production row(s). "
-                  f"Filling {min(len(prod_rows), qty)}.")
-
-        for i in range(min(len(prod_rows), qty)):
+        for i in range(to_fill):
             r = prod_rows[i]
             ws.cell(r, C_SERIAL).value     = serials[i]
             ws.cell(r, C_SERIAL).font      = _font()
@@ -214,12 +209,17 @@ def process_manifest(ws, manifest_rows, container_id):
             ws.cell(r, C_STATUS).font      = _font()
             ws.cell(r, C_STATUS).alignment = _center()
 
-        filled = min(len(prod_rows), qty)
-        if filled:
+        excess = serials[to_fill:]
+        if excess:
+            # Insert new Pre-Sale rows after the last row of this variant
+            new_items.append((key, excess, pre_sale_status))
             print(f"  MATCHED   {key[0]} {key[1]} {key[2]} — "
-                  f"{filled} serial(s) → {pre_sale_status}")
+                  f"{to_fill} In Production filled + {len(excess)} excess → new Pre-Sale rows")
+        elif to_fill:
+            print(f"  MATCHED   {key[0]} {key[1]} {key[2]} — "
+                  f"{to_fill} serial(s) → {pre_sale_status}")
 
-    # ── New: build plan and insert bottom-to-top ───────────────────────────────
+    # ── New + excess: build plan and insert bottom-to-top ─────────────────────
     if new_items:
         plan = build_insertion_plan(
             new_items, variant_rows, design_last, design_order, ws.max_row
