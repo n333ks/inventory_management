@@ -76,13 +76,13 @@ All templates extend `base.html`. Grouped order views use a Jinja `unit_map` dic
 - `fulfillment_type` (`pickup` / `delivery`) lives on both `sales_orders` and `warehouse`. Currently randomly assigned at startup; Shopify will set it in the future.
 - Warehouse change requests surface automatically on the warehouse page — `get_warehouse_change_requests()` joins `change_requests` with `warehouse` on `order_number` and returns only unresolved ones.
 
-## Legacy Excel Scripts
+## Scripts
 
-```bash
-python3 scripts/parse_manifest.py        # parse a container manifest CSV → updates Excel
-python3 scripts/sort_inventory.py        # re-sort design blocks alphabetically
-python3 scripts/refresh_counts.py        # recalculate QTY counts and variance
-python3 scripts/apply_status_fills.py    # reapply status colors + column widths
-```
+Active scripts imported by `app.py` live in `scripts/`:
+- `db.py` — all DB access
+- `constants.py` — file paths, column indices, SKU map
+- `export_excel.py` — syncs SQLite → `inventory_master.xlsx`
+- `parse_manifest.py` — parses container manifest CSVs
+- `change_orders.py` — change request procedure data and scenario logic
 
-Dependency: `openpyxl`. These are largely superseded by the Flask app but kept for bulk Excel operations.
+One-off migration scripts that predate the Flask app are in `scripts/legacy/` and are not imported anywhere.

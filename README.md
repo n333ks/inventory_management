@@ -153,15 +153,16 @@ Design codes: ALT · CAD · COR · GRN · MAL · MAR · RON · SEG · SEV · TOL
 
 ---
 
-## Legacy Excel Scripts
+## Scripts
 
-Scripts in `scripts/` predate the Flask app and operate directly on `inventory_master.xlsx`. Still useful for bulk operations:
+Active scripts used by the Flask app live in `scripts/`:
 
-```bash
-python3 scripts/parse_manifest.py       # parse container manifest → update Excel
-python3 scripts/sort_inventory.py       # re-sort design blocks alphabetically
-python3 scripts/refresh_counts.py       # recalculate QTY counts and variance
-python3 scripts/apply_status_fills.py   # reapply colors + column widths
-```
+| Script | Purpose |
+|---|---|
+| `db.py` | All database access — schema, queries, and mutations |
+| `constants.py` | Single source of truth for file paths, column indices, and SKU map |
+| `export_excel.py` | Syncs SQLite state to `inventory_master.xlsx` after every mutation |
+| `parse_manifest.py` | Parses container manifest CSVs and updates inventory |
+| `change_orders.py` | Change request procedure data and scenario resolution logic |
 
-`scripts/constants.py` is the single source of truth for file paths, column indices, and the SKU map.
+One-off migration and setup scripts that predate the Flask app are preserved in `scripts/legacy/` for reference.
