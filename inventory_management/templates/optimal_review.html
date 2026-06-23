@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}Quarterly Review{% endblock %}
+{% block page_title %}Quarterly Review{% endblock %}
+
+{% block page_actions %}
+<div style="display:flex; gap:10px; align-items:center;">
+    <div class="search-bar">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" id="reviewSearch" class="search-input" placeholder="Search by design or SKU…" oninput="filterReview(this.value)">
+    </div>
+    <span id="reviewCount" class="unit-count"></span>
+</div>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:20px; padding: 16px 24px;">
+    <div style="display:flex; align-items:center; gap:24px; flex-wrap:wrap;">
+        <div style="font-size:13px; color:#86868B;">
+            <strong style="color:#1D1D1F;">How suggestions work:</strong>
+            Quarterly demand is projected from historical sales velocity × 1.5 safety buffer.
+            Confidence reflects how much data exists.
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-left:auto;">
+            <span class="badge" style="background:#D1FAE5; color:#065F46;">High — 90+ days data</span>
+            <span class="badge" style="background:#FEF3C7; color:#92400E;">Medium — 30–90 days</span>
+            <span class="badge" style="background:#FFE4E6; color:#9F1239;">Low — under 30 days</span>
+            <span class="badge" style="background:#F3F4F6; color:#6B7280;">No data</span>
+        </div>
+    </div>
+</div>
+
+<form method="POST" action="{{ url_for('optimal_review_save') }}">
+<div class="card card-no-padding">
+    <div class="table-wrapper">
+        <table id="reviewTable">
+            <thead>
+                <tr>
+                    <th>Design</th>
+                    <th>Size</th>
+                    <th>Finish</th>
+                    <th>SKU</th>
+                    <th style="text-align:center">In Stock</th>
+                    <th style="text-align:center">In Prod</th>
+                    <th style="text-align:center">Pre-Sale</th>
+                    <th style="text-align:center">Total Sold</th>
+                    <th style="text-align:center">Confidence</th>
+                    <th style="text-align:center">Suggested</th>
+                    <th style="text-align:center">Current Optimal</th>
+                    <th style="text-align:center; min-width:100px;">New Optimal</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for v in variants %}
+                <tr class="review-row" data-design="{{ v.design_name }}" data-sku="{{ v.sku or '' }}">
+                    <td class="font-bold">{{ v.design_name }}</td>
+                    <td>{{ v.size }}</td>
+                    <td>{{ v.finish }}</td>
+                    <td class="font-mono">{{ v.sku or '—' }}</td>
+                    <td style="text-align:center">{{ v.in_stock }}</td>
+                    <td style="text-align:center">{{ v.in_prod }}</td>
+                    <td style="text-align:center">{{ v.pre_sale }}</td>
+                    <td style="text-align:center">
+                        {% if v.total_sold > 0 %}
+                            <span class="font-bold">{{ v.total_sold }}</span>
+                        {% else %}
+                            <span class="text-muted">0</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align:center">
+                        {% if v.confidence == 'High' %}
+                            <span class="badge" style="background:#D1FAE5; color:#065F46;">High</span>
+                        {% elif v.confidence == 'Medium' %}
+                            <span class="badge" style="background:#FEF3C7; color:#92400E;">Medium</span>
+                        {% elif v.confidence == 'Low' %}
+                            <span class="badge" style="background:#FFE4E6; color:#9F1239;">Low</span>
+                        {% else %}
+                            <span class="badge" style="background:#F3F4F6; color:#6B7280;">No data</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align:center">
+                        {% if v.confidence != 'No data' %}
+                            <span class="font-bold" style="color:#0071E3;">{{ v.suggested }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align:center">
+                        {% set variance = v.in_stock + v.in_prod + v.pre_sale - v.optimal_count %}
+                        {{ v.optimal_count }}
+                        {% if variance < 0 %}
+                            <span class="text-red font-bold">({{ variance }})</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align:center">
+                        <input type="number" name="optimal_{{ v.id }}"
+                               value="{{ v.suggested if v.confidence != 'No data' else v.optimal_count }}"
+                               min="0" class="optimal-input"
+                               style="width:70px; text-align:center; padding:6px 8px;
+                                      border:1.5px solid #D2D2D7; border-radius:8px;
+                                      font-size:13px; font-family:inherit;">
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+    <a href="{{ url_for('inventory') }}" class="btn btn-secondary">Cancel</a>
+    <button type="submit" class="btn btn-primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="20,6 9,17 4,12"/>
+        </svg>
+        Save All Optimal Counts
+    </button>
+</div>
+</form>
+
+<script>
+function filterReview(q) {
+    q = q.toLowerCase().trim();
+    document.querySelectorAll('.review-row').forEach(row => {
+        const matches = !q ||
+            row.dataset.design.toLowerCase().includes(q) ||
+            row.dataset.sku.toLowerCase().includes(q);
+        row.style.display = matches ? '' : 'none';
+    });
+    updateCount('reviewCount', '.review-row');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateCount('reviewCount', '.review-row');
+});
+</script>
+{% endblock %}

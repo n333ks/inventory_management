@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Order {{ order_number }}{% endblock %}
+{% block page_title %}Order Summary{% endblock %}
+
+{% block page_actions %}
+<div style="display:flex; gap:10px; align-items:center;">
+    <a href="{{ url_for('warehouse') }}" class="btn btn-sm btn-secondary">← Back to Warehouse</a>
+</div>
+{% endblock %}
+
+{% block content %}
+
+<!-- Order Header -->
+<div class="card" style="margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px;">
+        <div>
+            <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 4px;">Order</p>
+            <p style="font-size:22px; font-weight:700; font-family:monospace; color:#1D1D1F; margin:0;">{{ order_number }}</p>
+        </div>
+        <div>
+            <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 4px;">Customer</p>
+            <p style="font-size:17px; font-weight:500; color:#1D1D1F; margin:0;">{{ units[0].customer or '—' }}</p>
+        </div>
+        <div>
+            <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 4px;">Date Arrived</p>
+            <p style="font-size:15px; color:#1D1D1F; margin:0;">{{ units[0].date_arrived or '—' }}</p>
+        </div>
+        <div>
+            <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 4px;">Units</p>
+            <span class="unit-count" style="font-size:15px;">{{ units|length }}</span>
+        </div>
+        <div>
+            {% set total_done = progress.values() | sum %}
+            {% set grand_total = total_items * units|length %}
+            {% set overall_pct = ((total_done / grand_total) * 100) | int if grand_total > 0 else 0 %}
+            <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 4px;">Overall Progress</p>
+            <p style="font-size:15px; font-weight:600; color:{% if overall_pct == 100 %}#34C759{% else %}#0071E3{% endif %}; margin:0;">{{ overall_pct }}%</p>
+        </div>
+    </div>
+</div>
+
+<!-- Per-Unit Cards -->
+<div style="display:flex; flex-direction:column; gap:14px; margin-bottom:28px;">
+    {% for u in units %}
+    {% set done = progress.get(u.id, 0) %}
+    {% set pct = ((done / total_items) * 100) | int if total_items > 0 else 0 %}
+    <div class="card" style="padding:18px 20px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+            <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:center;">
+                <div>
+                    <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 2px;">Serial #</p>
+                    <p style="font-size:14px; font-family:monospace; font-weight:600; color:#1D1D1F; margin:0;">{{ u.serial_number }}</p>
+                </div>
+                <div>
+                    <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 2px;">Design</p>
+                    <p style="font-size:14px; font-weight:500; color:#1D1D1F; margin:0;">{{ u.design_name }}</p>
+                </div>
+                <div>
+                    <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 2px;">Size</p>
+                    <p style="font-size:14px; color:#1D1D1F; margin:0;">{{ u.size }}</p>
+                </div>
+                <div>
+                    <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 2px;">Finish</p>
+                    <p style="font-size:14px; color:#1D1D1F; margin:0;">{{ u.finish }}</p>
+                </div>
+                <div>
+                    <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 2px;">Glass</p>
+                    <p style="font-size:14px; color:#1D1D1F; margin:0;">{{ u.glass_type or '—' }}</p>
+                </div>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center;">
+                {% if u.status == 'Ready for Pickup' %}
+                    <span class="badge badge-in-stock">Ready</span>
+                {% elif u.status == 'In Prep' %}
+                    <span class="badge badge-in-prep">In Prep</span>
+                {% else %}
+                    <span class="badge">{{ u.status }}</span>
+                {% endif %}
+                <a href="{{ url_for('warehouse_prep', wh_id=u.id) }}" class="btn btn-sm btn-secondary">Prep Sheet →</a>
+            </div>
+        </div>
+
+        <!-- Progress bar for this unit -->
+        <div style="display:flex; align-items:center; gap:12px;">
+            <div style="flex:1; background:#E8E8ED; border-radius:99px; height:6px; overflow:hidden;">
+                <div style="background:{% if pct == 100 %}#34C759{% else %}#0071E3{% endif %}; height:100%; border-radius:99px; width:{{ pct }}%;"></div>
+            </div>
+            <span style="font-size:12px; color:#6E6E73; white-space:nowrap; min-width:80px; text-align:right;">{{ done }}/{{ total_items }} checks</span>
+        </div>
+
+        {% if u.notes %}
+        <div style="margin-top:12px; padding:10px 12px; background:#F5F5F7; border-radius:8px;">
+            <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 4px;">Notes</p>
+            <p style="font-size:13px; color:#1D1D1F; margin:0; white-space:pre-wrap;">{{ u.notes }}</p>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<!-- All Photos -->
+{% if photos %}
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">All Photos</h2>
+        <span class="unit-count">{{ photos|length }}</span>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px;">
+        {% for photo in photos %}
+        <div style="border-radius:10px; overflow:hidden; background:#F5F5F7;">
+            <img src="{{ url_for('static', filename='uploads/' ~ photo.warehouse_id ~ '/' ~ photo.filename) }}"
+                 alt="{{ photo.caption or 'Photo' }}"
+                 style="width:100%; aspect-ratio:4/3; object-fit:cover; display:block; cursor:pointer;"
+                 onclick="openLightbox(this.src)">
+            <div style="padding:8px 10px; background:#fff;">
+                <p style="font-size:12px; font-family:monospace; color:#0071E3; margin:0 0 2px;">{{ photo.serial_number }}</p>
+                {% if photo.caption %}
+                <p style="font-size:12px; color:#1D1D1F; margin:0 0 2px;">{{ photo.caption }}</p>
+                {% endif %}
+                <p style="font-size:11px; color:#8E8E93; margin:0;">{{ photo.uploaded_by }} · {{ photo.uploaded_at }}</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% else %}
+<div class="card" style="text-align:center; padding:32px; color:#8E8E93; font-size:14px;">
+    No photos uploaded yet for this order.
+</div>
+{% endif %}
+
+<!-- Lightbox -->
+<div id="lightbox" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:2000; align-items:center; justify-content:center;" onclick="closeLightbox()">
+    <img id="lightboxImg" src="" style="max-width:90vw; max-height:90vh; border-radius:8px; object-fit:contain;">
+</div>
+
+<script>
+function openLightbox(src) {
+    document.getElementById('lightboxImg').src = src;
+    document.getElementById('lightbox').style.display = 'flex';
+}
+function closeLightbox() { document.getElementById('lightbox').style.display = 'none'; }
+</script>
+{% endblock %}

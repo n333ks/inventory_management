@@ -11,12 +11,9 @@ from openpyxl.styles import Alignment, Font
 from apply_status_fills import apply_fills
 from fix_inventory_formatting import apply_design_block_borders
 from refresh_counts import refresh_counts
+from constants import C_SERIAL, C_STATUS, C_OPTIMAL, C_SKU, DATA_START, get_sku
 
-INVENTORY_FILE = "inventory_master.xlsx"
-DATA_START = 3
-C_SERIAL   = 11
-C_STATUS   = 12
-C_OPTIMAL  = 9
+from constants import INVENTORY_FILE
 
 WHITE = "FFFFFFFF"
 BLACK = "FF000000"
@@ -104,6 +101,9 @@ def write_blocks(ws, blocks):
                     cell.value     = val
                     cell.font      = a_e_font
                     cell.alignment = left_align
+                ws.cell(row, C_SKU).value     = get_sku(key)
+                ws.cell(row, C_SKU).font      = _font()
+                ws.cell(row, C_SKU).alignment = center
                 ws.cell(row, C_SERIAL).value     = serial
                 ws.cell(row, C_SERIAL).font      = _font()
                 ws.cell(row, C_SERIAL).alignment = center
@@ -127,7 +127,7 @@ def main():
     last_row = write_blocks(ws, blocks)
 
     apply_design_block_borders(ws)
-    refresh_counts(ws)
+    # refresh_counts is now a no-op shim (counts live in DB); fills applied below
     apply_fills(ws)
 
     wb.save(INVENTORY_FILE)

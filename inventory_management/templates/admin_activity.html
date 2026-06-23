@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Activity Log{% endblock %}
+{% block page_title %}Activity Log{% endblock %}
+
+{% block page_actions %}
+<div style="display:flex; gap:10px; align-items:center;">
+    <div class="search-bar">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" id="activitySearch" class="search-input" placeholder="Search user, action, order…" oninput="filterActivity()">
+    </div>
+    <select id="activityUserFilter" class="form-select" style="width:auto; min-width:140px;" onchange="filterActivity()">
+        <option value="">All Users</option>
+    </select>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card card-no-padding">
+    {% if entries %}
+    <div id="activityFeed" style="display:flex; flex-direction:column;">
+        {% for e in entries %}
+        <div class="activity-row"
+             data-user="{{ e.username | lower }}"
+             data-text="{{ (e.action ~ ' ' ~ (e.detail or '') ~ ' ' ~ (e.order_number or '') ~ ' ' ~ (e.serial_number or '') ~ ' ' ~ (e.full_name or '')) | lower }}"
+             style="display:flex; align-items:flex-start; gap:14px; padding:14px 20px; border-bottom:1px solid #F0F0F5;">
+            <!-- Avatar -->
+            <div style="flex-shrink:0; width:34px; height:34px; border-radius:50%; background:#E8E8ED; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:#6E6E73;">
+                {{ (e.full_name or e.username or '?')[0] | upper }}
+            </div>
+            <!-- Content -->
+            <div style="flex:1; min-width:0;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap;">
+                    <div>
+                        <span style="font-size:14px; font-weight:600; color:#1D1D1F;">{{ e.full_name or e.username }}</span>
+                        <span style="font-size:14px; color:#1D1D1F; margin-left:6px;">{{ e.action }}</span>
+                        {% if e.detail %}
+                        <span style="font-size:13px; color:#6E6E73; margin-left:4px;">— {{ e.detail }}</span>
+                        {% endif %}
+                    </div>
+                    <span style="font-size:12px; color:#8E8E93; white-space:nowrap; flex-shrink:0;">{{ e.created_at }}</span>
+                </div>
+                {% if e.order_number or e.serial_number %}
+                <div style="margin-top:4px; display:flex; gap:8px; flex-wrap:wrap;">
+                    {% if e.order_number %}
+                    <a href="{% if e.warehouse_id %}{{ url_for('warehouse_prep', wh_id=e.warehouse_id) }}{% else %}{{ url_for('warehouse_order_summary', order_number=e.order_number) }}{% endif %}"
+                       style="font-size:12px; font-family:monospace; background:#F0F4FF; color:#0071E3; padding:2px 8px; border-radius:4px; text-decoration:none;">{{ e.order_number }}</a>
+                    {% endif %}
+                    {% if e.serial_number %}
+                    <span style="font-size:12px; font-family:monospace; background:#F5F5F7; color:#6E6E73; padding:2px 8px; border-radius:4px;">{{ e.serial_number }}</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-cell" style="padding:48px; text-align:center; color:#8E8E93;">No activity recorded yet.</div>
+    {% endif %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const rows  = Array.from(document.querySelectorAll('.activity-row'));
+    const users = [...new Set(rows.map(r => r.dataset.user).filter(Boolean))].sort();
+    const sel   = document.getElementById('activityUserFilter');
+    users.forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u;
+        opt.textContent = rows.find(r => r.dataset.user === u)
+            ?.querySelector('span[style*="font-weight:600"]')?.textContent.trim() || u;
+        sel.appendChild(opt);
+    });
+});
+
+function filterActivity() {
+    const q    = document.getElementById('activitySearch').value.toLowerCase().trim();
+    const user = document.getElementById('activityUserFilter').value;
+    document.querySelectorAll('.activity-row').forEach(row => {
+        const matchQ    = !q    || row.dataset.text.includes(q);
+        const matchUser = !user || row.dataset.user === user;
+        row.style.display = matchQ && matchUser ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}

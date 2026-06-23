@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}{{ filename }}{% endblock %}
+{% block page_title %}Purchase Order{% endblock %}
+
+{% block page_actions %}
+<div style="display:flex; gap:10px; align-items:center;">
+    <span class="unit-count">{{ lines|length }} line items</span>
+    <a href="{{ url_for('purchase_orders_download', filename=filename) }}" class="btn btn-sm btn-outline">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="7,10 12,15 17,10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download CSV
+    </a>
+    <a href="{{ url_for('purchase_orders') }}" class="btn btn-sm btn-secondary">← Back</a>
+</div>
+{% endblock %}
+
+{% block content %}
+
+<!-- Summary Cards -->
+<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:24px;">
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-blue">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                <polyline points="14,2 14,8 20,8"/>
+            </svg>
+        </div>
+        <div class="stat-value">{{ lines|length }}</div>
+        <div class="stat-label">Line Items</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-red">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="1" x2="12" y2="23"/>
+                <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>
+            </svg>
+        </div>
+        <div class="stat-value" style="font-size:18px;">${{ '{:,.2f}'.format(grand_cost) }}</div>
+        <div class="stat-label">Total Cost</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-green">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23,6 13.5,15.5 8.5,10.5 1,18"/>
+                <polyline points="17,6 23,6 23,12"/>
+            </svg>
+        </div>
+        <div class="stat-value" style="font-size:18px;">${{ '{:,.2f}'.format(grand_retail) }}</div>
+        <div class="stat-label">Total Retail Value</div>
+    </div>
+</div>
+
+<!-- Line Items -->
+<div class="card card-no-padding">
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Design</th>
+                    <th>Size</th>
+                    <th>Finish</th>
+                    <th>Swing</th>
+                    <th>Glass Type</th>
+                    <th>SKU</th>
+                    <th style="text-align:center">Qty</th>
+                    <th style="text-align:right">Unit Cost</th>
+                    <th style="text-align:right">Unit Retail</th>
+                    <th style="text-align:right">Line Cost</th>
+                    <th style="text-align:right">Line Retail</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for l in lines %}
+                <tr>
+                    <td class="font-bold">{{ l.design }}</td>
+                    <td>{{ l.size }}</td>
+                    <td>{{ l.finish }}</td>
+                    <td>{{ l.swing }}</td>
+                    <td>{{ l.glass_type }}</td>
+                    <td class="font-mono">{{ l.sku or '—' }}</td>
+                    <td style="text-align:center; font-weight:600;">{{ l.qty }}</td>
+                    <td style="text-align:right">${{ '%.2f'|format(l.unit_cost) }}</td>
+                    <td style="text-align:right">${{ '%.2f'|format(l.retail) }}</td>
+                    <td style="text-align:right; font-weight:600;">${{ '%.2f'|format(l.line_cost) }}</td>
+                    <td style="text-align:right; font-weight:600; color:#34C759;">${{ '%.2f'|format(l.line_retail) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr style="border-top: 2px solid #E8E8ED;">
+                    <td colspan="9" style="text-align:right; font-weight:600; padding:12px 14px;">Total</td>
+                    <td style="text-align:right; font-weight:700; color:#0071E3; padding:12px 14px;">${{ '{:,.2f}'.format(grand_cost) }}</td>
+                    <td style="text-align:right; font-weight:700; color:#34C759; padding:12px 14px;">${{ '{:,.2f}'.format(grand_retail) }}</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+{% endblock %}

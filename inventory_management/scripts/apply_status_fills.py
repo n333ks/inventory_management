@@ -13,9 +13,7 @@ Can be imported as a module (apply_fills) or run standalone.
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-INVENTORY_FILE = "inventory_master.xlsx"
-DATA_START     = 3
-C_STATUS       = 12   # L
+from constants import C_STATUS, DATA_START, INVENTORY_FILE, SALES_TAB, WAREHOUSE_TAB
 
 _FILLS = {
     "In Stock":      PatternFill("solid", fgColor="C6EFCE"),
@@ -37,8 +35,21 @@ def _status_fill(value):
     return _FILLS.get(s, _NO_FILL)
 
 
+def fit_columns(ws):
+    """Auto-fit every column width to its longest cell content."""
+    from openpyxl.utils import get_column_letter
+    col_widths = {}
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value:
+                col_widths[cell.column] = max(col_widths.get(cell.column, 0), len(str(cell.value)))
+    for col, max_len in col_widths.items():
+        ws.column_dimensions[get_column_letter(col)].width = max(max_len + 4, 10)
+
+
 def apply_fills(ws):
-    """Apply status fills to every cell in column L of the given worksheet."""
+    """Apply status fills to every cell in column M of the given worksheet."""
+    fit_columns(ws)
     for r in range(DATA_START, ws.max_row + 1):
         cell = ws.cell(row=r, column=C_STATUS)
         cell.fill = _status_fill(cell.value)
@@ -63,6 +74,8 @@ def main():
         del ws.conditional_formatting._cf_rules[r]
 
     apply_fills(ws)
+    fit_columns(wb[SALES_TAB])
+    fit_columns(wb[WAREHOUSE_TAB])
     wb.save(INVENTORY_FILE)
 
     counts = {}

@@ -1,0 +1,327 @@
+{% extends "base.html" %}
+
+{% block title %}Warehouse{% endblock %}
+{% block page_title %}Warehouse{% endblock %}
+
+{% block page_actions %}
+<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <div class="search-bar">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" id="warehouseSearch" class="search-input" placeholder="Order #, customer, or design…" oninput="applyWarehouseFilters()">
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+
+{# Build a map from order_number → list of units #}
+{% set unit_map = {} %}
+{% for u in units %}
+    {% if unit_map.update({u.order_number: (unit_map.get(u.order_number) or []) + [u]}) %}{% endif %}
+{% endfor %}
+
+{# Split summaries into sections #}
+{% set in_prep       = summaries | selectattr('status', 'equalto', 'In Prep') | list %}
+{% set pending       = summaries | selectattr('status', 'equalto', 'Pending Review') | list %}
+{% set ready_pickup  = summaries | selectattr('status', 'equalto', 'Ready for Pickup') | list %}
+{% set ready_deliver = summaries | selectattr('status', 'equalto', 'Ready for Delivery') | list %}
+
+{# ── Reusable order table macro ──────────────────────────────────────────────── #}
+{% macro order_table(section_summaries, show_actions, show_review) %}
+{% if section_summaries %}
+<div class="table-wrapper">
+<table>
+    <thead>
+        <tr>
+            <th style="width:32px;"></th>
+            <th>Order #</th>
+            <th>Customer</th>
+            <th>Type</th>
+            <th>Items</th>
+            <th>Design(s)</th>
+            <th>Date Arrived</th>
+            <th>Progress</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for s in section_summaries %}
+    {% set order_units = unit_map.get(s.order_number, []) %}
+
+    <tr class="warehouse-row order-summary"
+        data-order="{{ s.order_number | lower }}"
+        data-customer="{{ s.customer | lower }}"
+        data-design="{{ s.designs | lower }}"
+        style="cursor:pointer;"
+        onclick="toggleOrder('{{ s.order_number }}', this)">
+        <td style="text-align:center; color:#8E8E93;">
+            <span class="expand-icon" style="display:inline-block; transition:transform .2s; font-size:10px;">▶</span>
+        </td>
+        <td class="font-mono font-bold">
+            <a href="{{ url_for('warehouse_order_summary', order_number=s.order_number) }}"
+               onclick="event.stopPropagation()"
+               style="color:#0071E3; text-decoration:none;">{{ s.order_number }}</a>
+        </td>
+        <td style="font-weight:500;">{{ s.customer }}</td>
+        <td>
+            {% if s.fulfillment_type == 'delivery' %}
+                <span class="badge" style="background:#FFF3E0; color:#E65100; font-size:11px;">🚚 Delivery</span>
+            {% else %}
+                <span class="badge" style="background:#E8F5E9; color:#2E7D32; font-size:11px;">🏠 Pickup</span>
+            {% endif %}
+        </td>
+        <td style="text-align:center;">
+            <span class="unit-count" style="font-size:12px;">{{ s.unit_count }}</span>
+        </td>
+        <td style="color:#6E6E73; font-size:13px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ s.designs }}</td>
+        <td class="text-muted">{{ s.date_arrived or '—' }}</td>
+        <td onclick="event.stopPropagation()" style="min-width:110px;">
+            {% set pdone = order_progress.get(s.order_number, 0) %}
+            {% set ptotal = s.unit_count * total_checklist %}
+            {% set ppct = ((pdone / ptotal) * 100) | int if ptotal > 0 else 0 %}
+            <div style="display:flex; align-items:center; gap:8px;">
+                <div style="flex:1; background:#E8E8ED; border-radius:99px; height:6px; overflow:hidden; min-width:60px;">
+                    <div style="background:{% if ppct == 100 %}#34C759{% else %}#0071E3{% endif %}; height:100%; border-radius:99px; width:{{ ppct }}%;"></div>
+                </div>
+                <span style="font-size:11px; color:#8E8E93; white-space:nowrap;">{{ ppct }}%</span>
+            </div>
+        </td>
+        <td onclick="event.stopPropagation()">
+            {% if show_review %}
+            <div style="display:flex; gap:6px;">
+                <form method="POST" action="{{ url_for('warehouse_order_approve', order_number=s.order_number) }}">
+                    <button type="submit" class="btn btn-sm btn-primary">Accept</button>
+                </form>
+                <form method="POST" action="{{ url_for('warehouse_order_reject', order_number=s.order_number) }}"
+                      onsubmit="return confirm('Send {{ s.order_number }} back to In Prep?')">
+                    <button type="submit" class="btn btn-sm btn-danger">Push Back</button>
+                </form>
+            </div>
+            {% endif %}
+        </td>
+    </tr>
+
+    {% for u in order_units %}
+    <tr class="unit-subrow" data-parent="{{ s.order_number }}"
+        style="display:none; background:#FAFAFA;">
+        <td></td>
+        <td style="padding-left:12px;">
+            <span style="font-size:11px; color:#8E8E93; font-family:monospace;">{{ u.serial_number or '—' }}</span>
+        </td>
+        <td colspan="3" style="font-size:13px; font-weight:500; color:#1D1D1F;">
+            {{ u.design_name }} <span style="font-weight:400; color:#6E6E73;">· {{ u.size }} · {{ u.finish }}</span>
+        </td>
+        <td class="font-mono" style="font-size:12px; color:#8E8E93;">{{ u.container_id or '—' }}</td>
+        <td>
+            {% set ust = u.status or '' %}
+            {% if ust == 'Pending Review' %}
+                <span class="badge" style="background:#FFF8E1; color:#F57F17; font-size:11px;">Pending Review</span>
+            {% elif ust == 'In Prep' %}
+                <span class="badge badge-in-prep" style="font-size:11px;">In Prep</span>
+            {% elif ust.startswith('Ready') %}
+                <span class="badge badge-in-stock" style="font-size:11px;">Ready</span>
+            {% else %}
+                <span class="badge" style="font-size:11px;">{{ ust }}</span>
+            {% endif %}
+        </td>
+        <td></td>
+        <td>
+            <div style="display:flex; gap:5px; align-items:center;">
+                <a href="{{ url_for('warehouse_prep', wh_id=u.id) }}" class="btn btn-sm btn-secondary">Prep Sheet</a>
+                {% if is_admin and show_actions %}
+                <button class="btn btn-sm btn-secondary"
+                    onclick="openChangeOrder('{{ s.order_number }}','{{ u.serial_number }}','{{ u.design_name }}','{{ u.size }}','{{ u.finish }}','warehouse')">
+                    Change
+                </button>
+                <form method="POST" action="{{ url_for('containers_cancel') }}"
+                      onsubmit="return confirm('Cancel this unit from {{ s.order_number }}?')">
+                    <input type="hidden" name="order_number" value="{{ s.order_number }}">
+                    <input type="hidden" name="source" value="warehouse">
+                    <input type="hidden" name="serial" value="{{ u.serial_number }}">
+                    <button type="submit" class="btn btn-sm btn-danger">Cancel</button>
+                </form>
+                {% endif %}
+            </div>
+        </td>
+    </tr>
+    {% endfor %}
+
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p style="padding:20px; color:#8E8E93; font-size:14px; margin:0;">No orders in this section.</p>
+{% endif %}
+{% endmacro %}
+
+{# ── Section: In Prep ────────────────────────────────────────────────────────── #}
+<div style="margin-bottom:28px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+        <h2 style="font-size:15px; font-weight:700; color:#1D1D1F; margin:0;">In Prep</h2>
+        <span class="unit-count">{{ in_prep|length }}</span>
+    </div>
+    <div class="card card-no-padding">
+        {{ order_table(in_prep, show_actions=true, show_review=false) }}
+    </div>
+</div>
+
+{# ── Section: Pending Review ─────────────────────────────────────────────────── #}
+<div style="margin-bottom:28px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+        <h2 style="font-size:15px; font-weight:700; color:#1D1D1F; margin:0;">Pending Review</h2>
+        <span class="unit-count" style="background:#FFF8E1; color:#F57F17;">{{ pending|length }}</span>
+        {% if pending %}
+        <span style="font-size:12px; color:#8E8E93;">Review completed orders before releasing to customer</span>
+        {% endif %}
+    </div>
+    <div class="card card-no-padding">
+        {{ order_table(pending, show_actions=false, show_review=true) }}
+    </div>
+</div>
+
+{# ── Section: Ready for Pickup ───────────────────────────────────────────────── #}
+<div style="margin-bottom:28px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+        <h2 style="font-size:15px; font-weight:700; color:#1D1D1F; margin:0;">Ready for Pickup</h2>
+        <span class="unit-count" style="background:#E8F5E9; color:#2E7D32;">{{ ready_pickup|length }}</span>
+    </div>
+    <div class="card card-no-padding">
+        {{ order_table(ready_pickup, show_actions=false, show_review=false) }}
+    </div>
+</div>
+
+{# ── Section: Ready for Delivery ─────────────────────────────────────────────── #}
+<div style="margin-bottom:28px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+        <h2 style="font-size:15px; font-weight:700; color:#1D1D1F; margin:0;">Ready for Delivery</h2>
+        <span class="unit-count" style="background:#FFF3E0; color:#E65100;">{{ ready_deliver|length }}</span>
+    </div>
+    <div class="card card-no-padding">
+        {{ order_table(ready_deliver, show_actions=false, show_review=false) }}
+    </div>
+</div>
+
+{# ── Change Order Modal ───────────────────────────────────────────────────────── #}
+{% if is_admin %}
+<div id="changeOrderModal" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.4); align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:16px; padding:28px; width:560px; max-width:95vw; box-shadow:0 20px 60px rgba(0,0,0,0.2);">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px;">
+            <div>
+                <h2 style="font-size:17px; font-weight:600; color:#1D1D1F; margin:0 0 4px;">Change Order</h2>
+                <p id="coOrderLabel" style="font-size:13px; color:#6E6E73; margin:0;"></p>
+            </div>
+            <button onclick="closeChangeOrder()" style="background:none; border:none; cursor:pointer; color:#6E6E73; font-size:22px; line-height:1; padding:0;">&times;</button>
+        </div>
+        <div style="background:#F5F5F7; border-radius:10px; padding:14px 16px; margin-bottom:20px;">
+            <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 6px;">Current Unit</p>
+            <p id="coCurrentUnit" style="font-size:14px; color:#1D1D1F; margin:0;"></p>
+        </div>
+        <input type="text" id="coSearch" placeholder="Search design, size, finish…" oninput="filterCoUnits()"
+               style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none; margin-bottom:10px;">
+        <div id="coUnitList" style="max-height:240px; overflow-y:auto; border:1.5px solid #D2D2D7; border-radius:8px;"></div>
+        <p id="coNoResults" style="display:none; font-size:13px; color:#6E6E73; text-align:center; padding:16px 0; margin:0;">No available units match.</p>
+        <form id="coForm" method="POST" action="{{ url_for('sales_change_order') }}" style="margin-top:16px;">
+            <input type="hidden" name="order_number" id="coOrderNumber">
+            <input type="hidden" name="old_serial"   id="coOldSerial">
+            <input type="hidden" name="new_unit_id"  id="coNewUnitId">
+            <input type="hidden" name="source"       id="coSource">
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button type="button" onclick="closeChangeOrder()" class="btn btn-secondary">Cancel</button>
+                <button type="submit" id="coSubmit" class="btn btn-primary" disabled>Confirm Swap</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function toggleOrder(orderNum, summaryRow) {
+    const subrows = document.querySelectorAll(`.unit-subrow[data-parent="${orderNum}"]`);
+    const icon = summaryRow.querySelector('.expand-icon');
+    const isOpen = subrows[0] && subrows[0].style.display !== 'none';
+    subrows.forEach(r => r.style.display = isOpen ? 'none' : '');
+    if (icon) icon.style.transform = isOpen ? '' : 'rotate(90deg)';
+}
+
+function applyWarehouseFilters() {
+    const q = (document.getElementById('warehouseSearch').value || '').toLowerCase().trim();
+    document.querySelectorAll('.warehouse-row').forEach(row => {
+        const match = !q || row.dataset.order.includes(q) || row.dataset.customer.includes(q) || row.dataset.design.includes(q);
+        row.style.display = match ? '' : 'none';
+        if (!match) {
+            const orderNum = row.querySelector('td:nth-child(2) a')?.textContent.trim();
+            if (orderNum) document.querySelectorAll(`.unit-subrow[data-parent="${orderNum}"]`).forEach(r => r.style.display = 'none');
+        }
+    });
+}
+
+{% if is_admin %}
+const AVAILABLE_UNITS = [];
+
+function openChangeOrder(orderNum, serial, design, size, finish, source) {
+    document.getElementById('coOrderLabel').textContent = orderNum;
+    document.getElementById('coCurrentUnit').textContent = `${design} · ${size} · ${finish} · ${serial}`;
+    document.getElementById('coOrderNumber').value = orderNum;
+    document.getElementById('coOldSerial').value = serial;
+    document.getElementById('coSource').value = source || 'warehouse';
+    document.getElementById('coNewUnitId').value = '';
+    document.getElementById('coSubmit').disabled = true;
+    document.getElementById('coSearch').value = '';
+
+    fetch('/sales/available-units')
+        .then(r => r.json())
+        .then(data => { AVAILABLE_UNITS.length = 0; AVAILABLE_UNITS.push(...data); renderCoUnits(data); });
+
+    document.getElementById('changeOrderModal').style.display = 'flex';
+    setTimeout(() => document.getElementById('coSearch').focus(), 50);
+}
+
+function closeChangeOrder() { document.getElementById('changeOrderModal').style.display = 'none'; }
+
+function filterCoUnits() {
+    const q = document.getElementById('coSearch').value.toLowerCase();
+    renderCoUnits(q ? AVAILABLE_UNITS.filter(u =>
+        u.design_name.toLowerCase().includes(q) || u.size.toLowerCase().includes(q) || u.finish.toLowerCase().includes(q)
+    ) : AVAILABLE_UNITS);
+}
+
+function renderCoUnits(units) {
+    const list = document.getElementById('coUnitList');
+    const noRes = document.getElementById('coNoResults');
+    list.innerHTML = '';
+    if (!units.length) { list.style.display = 'none'; noRes.style.display = 'block'; return; }
+    list.style.display = 'block'; noRes.style.display = 'none';
+    let lastGroup = null;
+    units.forEach(u => {
+        const group = u.status === 'In Stock' ? 'In Stock' : 'Pre-Sale';
+        if (group !== lastGroup) {
+            lastGroup = group;
+            const hdr = document.createElement('div');
+            hdr.style.cssText = 'padding:6px 14px 4px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; background:#F5F5F7; border-bottom:1px solid #E8E8ED;';
+            hdr.textContent = group === 'In Stock' ? '⚡ In Stock — Available Now' : '🕐 Pre-Sale';
+            list.appendChild(hdr);
+        }
+        const row = document.createElement('div');
+        row.dataset.unitId = u.id;
+        row.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:10px 14px; cursor:pointer; border-bottom:1px solid #F0F0F5; font-size:13px;';
+        row.innerHTML = `<span style="font-weight:500;">${u.design_name} <span style="font-weight:400; color:#6E6E73;">· ${u.size} · ${u.finish}</span></span><span style="font-family:monospace; font-size:12px; color:#6E6E73;">${u.serial_number || '—'}</span>`;
+        row.addEventListener('click', () => {
+            document.querySelectorAll('#coUnitList [data-unit-id]').forEach(r => r.style.background = '');
+            row.style.background = '#EFF6FF';
+            document.getElementById('coNewUnitId').value = u.id;
+            document.getElementById('coSubmit').disabled = false;
+        });
+        list.appendChild(row);
+    });
+}
+
+document.getElementById('changeOrderModal').addEventListener('click', function(e) {
+    if (e.target === this) closeChangeOrder();
+});
+{% endif %}
+</script>
+{% endblock %}

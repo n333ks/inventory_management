@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Inventory{% endblock %}
+{% block page_title %}Inventory{% endblock %}
+
+{% block page_actions %}
+<div style="display:flex; gap:10px; align-items:center;">
+    <span id="inventoryCount" class="unit-count"></span>
+    <div class="search-bar">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" id="inventorySearch" class="search-input" placeholder="Search by design or SKU…" oninput="applyInventoryFilters()">
+    </div>
+    <select id="containerFilter" class="form-select" style="width:auto; min-width:150px;" onchange="applyInventoryFilters()">
+        <option value="">All Containers</option>
+        {% for c in containers %}
+        <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+    </select>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card card-no-padding">
+    <div class="table-wrapper">
+        <table id="inventoryTable">
+            <thead>
+                <tr>
+                    <th>Design Name</th>
+                    <th>Size</th>
+                    <th>Finish</th>
+                    <th>Swing</th>
+                    <th>Glass Type</th>
+                    <th>SKU</th>
+                    <th style="text-align:center">In Stock</th>
+                    <th style="text-align:center">In Production</th>
+                    <th style="text-align:center">Pre-Sale</th>
+                    <th style="text-align:center">Optimal</th>
+                    <th style="text-align:center">Variance</th>
+                    <th>Serial #</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% set ns = namespace(prev_variant_id=None, prev_design=None) %}
+                {% for u in units %}
+                    {% set is_first = (u.variant_id != ns.prev_variant_id) %}
+                    {% set design_changed = (u.design_name != ns.prev_design) %}
+                    {% set s = summary.get(u.variant_id) %}
+                    {% if is_first %}
+                        {% set ns.prev_variant_id = u.variant_id %}
+                        {% set ns.prev_design = u.design_name %}
+                    {% endif %}
+                    {% if design_changed and not loop.first %}
+                        {% set gap_class = "design-gap" %}
+                    {% elif is_first and not loop.first %}
+                        {% set gap_class = "variant-gap" %}
+                    {% else %}
+                        {% set gap_class = "" %}
+                    {% endif %}
+                    {% set st = u.status or '' %}
+                    {% if st == 'In Stock' %}
+                        {% set status_class = "row-in-stock" %}
+                    {% elif st.startswith('Pre-Sale') %}
+                        {% set status_class = "row-pre-sale" %}
+                    {% elif st == 'In Production' %}
+                        {% set status_class = "row-in-production" %}
+                    {% elif st.startswith('Allocated') %}
+                        {% set status_class = "row-allocated" %}
+                    {% elif st == 'In Prep' %}
+                        {% set status_class = "row-in-prep" %}
+                    {% else %}
+                        {% set status_class = "" %}
+                    {% endif %}
+                    <tr class="inv-row {{ gap_class }} {{ status_class }}"
+                        data-design="{{ u.design_name }}" data-sku="{{ u.sku }}" data-container="{{ u.container_id or '' }}"
+                        {% if s %}
+                        data-in-stock="{{ s.in_stock }}" data-in-prod="{{ s.in_prod }}" data-pre-sale="{{ s.pre_sale }}"
+                        data-optimal="{{ s.optimal_count }}" data-variance="{{ s.variance }}"
+                        {% endif %}>
+                        {% if is_first %}
+                            <td class="cell-design font-bold">{{ u.design_name }}</td>
+                            <td class="font-bold">{{ u.size }}</td>
+                            <td class="font-bold">{{ u.finish }}</td>
+                            <td class="font-bold">{{ u.swing }}</td>
+                            <td class="font-bold">{{ u.glass_type }}</td>
+                            {% set c = costs.get(u.variant_id) %}
+                            <td class="font-mono{% if c %} has-tooltip{% endif %}"
+                                {% if c %}data-tooltip="Cost: ${{ '%.2f'|format(c.unit_cost) }} · Retail: ${{ '%.2f'|format(c.retail) }} · Margin: {{ c.margin }}%"{% endif %}>
+                                {{ u.sku }}</td>
+                            {% if s %}
+                                <td style="text-align:center">{{ s.in_stock }}</td>
+                                <td style="text-align:center">{{ s.in_prod }}</td>
+                                <td style="text-align:center">{{ s.pre_sale }}</td>
+                                <td style="text-align:center">{{ s.optimal_count }}</td>
+                                <td style="text-align:center">
+                                    {% if s.variance < 0 %}
+                                        <span class="text-red font-bold">{{ s.variance }}</span>
+                                    {% else %}
+                                        <span class="text-muted">{{ s.variance }}</span>
+                                    {% endif %}
+                                </td>
+                            {% else %}
+                                <td></td><td></td><td></td><td></td><td></td>
+                            {% endif %}
+                        {% else %}
+                            <td class="cell-secondary">{{ u.design_name }}</td>
+                            <td class="cell-secondary">{{ u.size }}</td>
+                            <td class="cell-secondary">{{ u.finish }}</td>
+                            <td class="cell-secondary">{{ u.swing }}</td>
+                            <td class="cell-secondary">{{ u.glass_type }}</td>
+                            <td class="cell-secondary font-mono{% if c %} has-tooltip{% endif %}"
+                                {% if c %}data-tooltip="Cost: ${{ '%.2f'|format(c.unit_cost) }} · Retail: ${{ '%.2f'|format(c.retail) }} · Margin: {{ c.margin }}%"{% endif %}>
+                                {{ u.sku }}</td>
+                            <td></td><td></td><td></td><td></td><td></td>
+                        {% endif %}
+                        <td class="font-mono{% if u.container_id %} has-tooltip{% endif %}"
+                            {% if u.container_id %}data-tooltip="{{ u.container_id }}{% if u.date_received %} ({{ u.date_received }}){% endif %}"{% endif %}>
+                            {{ u.serial_number or '—' }}
+                        </td>
+                        <td>
+                            {% if st == 'In Stock' %}
+                                <span class="badge badge-in-stock">In Stock</span>
+                            {% elif st.startswith('Pre-Sale') %}
+                                <span class="badge badge-pre-sale">{{ st }}</span>
+                            {% elif st == 'In Production' %}
+                                <span class="badge badge-in-production">In Production</span>
+                            {% elif st.startswith('Allocated') %}
+                                <span class="badge badge-allocated">{{ st }}</span>
+                            {% elif st == 'In Prep' %}
+                                <span class="badge badge-in-prep">In Prep</span>
+                            {% else %}
+                                <span class="badge">{{ st }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="13" class="empty-cell">No inventory records found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

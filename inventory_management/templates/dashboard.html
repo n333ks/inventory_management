@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- ── Stat Cards ─────────────────────────────────────────────────────────── -->
+<div class="stat-grid" style="margin-bottom: 24px; grid-template-columns: repeat(5, 1fr);">
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-green">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20,6 9,17 4,12"/>
+            </svg>
+        </div>
+        <div class="stat-value">{{ in_stock }}</div>
+        <div class="stat-label">In Stock</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-red">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12,6 12,12 16,14"/>
+            </svg>
+        </div>
+        <div class="stat-value">{{ in_prod }}</div>
+        <div class="stat-label">In Production</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-yellow">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
+                <line x1="7" y1="7" x2="7.01" y2="7"/>
+            </svg>
+        </div>
+        <div class="stat-value">{{ pre_sale }}</div>
+        <div class="stat-label">Pre-Sale</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-blue">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="1" x2="12" y2="23"/>
+                <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>
+            </svg>
+        </div>
+        <div class="stat-value" style="font-size:18px;">${{ '{:,.0f}'.format(inventory_value) }}</div>
+        <div class="stat-label">Inventory Value</div>
+    </div>
+    <div class="stat-card {% if alerts > 0 %}stat-card-alert{% endif %}">
+        <div class="stat-icon stat-icon-red">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+        </div>
+        <div class="stat-value {% if alerts > 0 %}text-red{% endif %}">{{ alerts }}</div>
+        <div class="stat-label">Reorder Alerts</div>
+    </div>
+</div>
+
+<!-- ── Middle Row ─────────────────────────────────────────────────────────── -->
+<div class="two-col" style="margin-bottom: 24px;">
+
+    <!-- Reorder Alerts -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Variants Needing Reorder</h2>
+            <div style="display:flex; gap:8px; align-items:center;">
+                {% if negative_variants %}
+                    <span class="badge badge-red">{{ negative_variants|length }} items</span>
+                    <form method="POST" action="{{ url_for('purchase_orders_generate') }}" style="margin:0;">
+                        <button type="submit" class="btn btn-sm btn-primary">Generate PO</button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+        {% if negative_variants %}
+        <div class="table-wrapper" style="max-height: 320px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Design</th>
+                        <th>Size</th>
+                        <th>Finish</th>
+                        <th style="text-align:center">Have</th>
+                        <th style="text-align:center">Need</th>
+                        <th style="text-align:center">Gap</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in negative_variants %}
+                    <tr>
+                        <td>{{ v.design_name }}</td>
+                        <td>{{ v.size }}</td>
+                        <td>{{ v.finish }}</td>
+                        <td style="text-align:center">{{ v.in_stock + v.in_prod + v.pre_sale }}</td>
+                        <td style="text-align:center">{{ v.optimal_count }}</td>
+                        <td style="text-align:center"><span class="text-red font-bold">{{ v.variance }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#34C759" stroke-width="1.5">
+                <polyline points="20,6 9,17 4,12"/>
+            </svg>
+            <p style="color:#34C759; font-weight:500;">All variants are at or above optimal</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Container Breakdown -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Container Breakdown</h2>
+            <a href="{{ url_for('containers') }}" class="link-subtle">Manage →</a>
+        </div>
+        {% if container_breakdown %}
+        <div class="table-wrapper" style="max-height: 320px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Container</th>
+                        <th style="text-align:center">Total</th>
+                        <th style="text-align:center">In Stock</th>
+                        <th style="text-align:center">Pre-Sale</th>
+                        <th style="text-align:center">Allocated</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in container_breakdown %}
+                    <tr>
+                        <td class="font-mono font-bold">{{ c.container_id }}</td>
+                        <td style="text-align:center">{{ c.total }}</td>
+                        <td style="text-align:center">
+                            {% if c.in_stock > 0 %}
+                                <span class="badge badge-in-stock" style="font-size:11px;">{{ c.in_stock }}</span>
+                            {% else %}—{% endif %}
+                        </td>
+                        <td style="text-align:center">
+                            {% if c.pre_sale > 0 %}
+                                <span class="badge badge-pre-sale" style="font-size:11px;">{{ c.pre_sale }}</span>
+                            {% else %}—{% endif %}
+                        </td>
+                        <td style="text-align:center">
+                            {% if c.allocated > 0 %}
+                                <span class="badge badge-allocated" style="font-size:11px;">{{ c.allocated }}</span>
+                            {% else %}—{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#D2D2D7" stroke-width="1.5">
+                <rect x="1" y="3" width="15" height="13" rx="1"/>
+                <path d="M16 8h4l3 3v5h-7V8z"/>
+                <circle cx="5.5" cy="18.5" r="2.5"/>
+                <circle cx="18.5" cy="18.5" r="2.5"/>
+            </svg>
+            <p>No containers parsed yet</p>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+
+<!-- ── Recent Sales ───────────────────────────────────────────────────────── -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Recent Sales Orders</h2>
+        <a href="{{ url_for('sales') }}" class="link-subtle">View all →</a>
+    </div>
+    {% if recent_sales %}
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Order #</th>
+                    <th>Customer</th>
+                    <th>Design</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in recent_sales %}
+                <tr>
+                    <td class="font-mono font-bold">{{ s.order_number }}</td>
+                    <td>{{ s.customer }}</td>
+                    <td>{{ s.design_name }}</td>
+                    <td class="text-muted">{{ s.date_allocated or '—' }}</td>
+                    <td>
+                        {% if s.status == 'Allocated' %}
+                            <span class="badge badge-allocated">Allocated</span>
+                        {% elif s.status == 'In Prep' %}
+                            <span class="badge badge-in-prep">In Prep</span>
+                        {% else %}
+                            <span class="badge">{{ s.status }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#D2D2D7" stroke-width="1.5">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
+        </svg>
+        <p>No sales orders yet</p>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}

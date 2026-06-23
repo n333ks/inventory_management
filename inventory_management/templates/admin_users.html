@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Users{% endblock %}
+{% block page_title %}User Management{% endblock %}
+
+{% block content %}
+
+<div class="two-col" style="gap:20px; align-items:start;">
+
+<!-- Create User -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Add User</h2>
+    </div>
+    <form method="POST" action="{{ url_for('admin_users_create') }}" style="display:flex; flex-direction:column; gap:14px;">
+        <div>
+            <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:5px;">Full Name</label>
+            <input type="text" name="full_name" placeholder="e.g. Carlos Reyes"
+                   style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none;">
+        </div>
+        <div>
+            <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:5px;">Username</label>
+            <input type="text" name="username" placeholder="e.g. carlos" required
+                   style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none;">
+        </div>
+        <div>
+            <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:5px;">Password</label>
+            <input type="password" name="password" placeholder="Temporary password" required
+                   style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none;">
+        </div>
+        <div>
+            <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:5px;">Role</label>
+            <select name="role" class="form-select" style="width:100%;">
+                <option value="warehouse">Warehouse Staff</option>
+                <option value="admin">Admin</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Create User</button>
+    </form>
+</div>
+
+<!-- User List -->
+<div class="card card-no-padding">
+    <div class="card-header card-header-padded">
+        <h2 class="card-title">All Users</h2>
+        <span class="unit-count">{{ users|length }}</span>
+    </div>
+    {% if users %}
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Reset Password</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td style="font-weight:500;">{{ u.full_name or '—' }}</td>
+                    <td class="font-mono">{{ u.username }}</td>
+                    <td>
+                        {% if u.role == 'admin' %}
+                            <span class="badge badge-allocated">Admin</span>
+                        {% else %}
+                            <span class="badge">Warehouse</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form method="POST" action="{{ url_for('admin_users_password', user_id=u.id) }}"
+                              style="display:flex; gap:6px;"
+                              onsubmit="return this.querySelector('input').value.length >= 4">
+                            <input type="password" name="password" placeholder="New password" minlength="4"
+                                   style="padding:6px 10px; border:1.5px solid #D2D2D7; border-radius:7px; font-size:13px; width:130px; outline:none;">
+                            <button type="submit" class="btn btn-sm btn-secondary">Update</button>
+                        </form>
+                    </td>
+                    <td>
+                        {% if u.username != current_user.username %}
+                        <form method="POST" action="{{ url_for('admin_users_delete', user_id=u.id) }}"
+                              onsubmit="return confirm('Delete user {{ u.username }}?')">
+                            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:40px;">
+        <p>No users yet.</p>
+    </div>
+    {% endif %}
+</div>
+
+</div>
+{% endblock %}

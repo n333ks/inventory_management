@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Purchase Orders{% endblock %}
+{% block page_title %}Purchase Orders{% endblock %}
+
+{% block content %}
+
+<!-- Generate PO Section -->
+<div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+        <h2 class="card-title">Generate Purchase Order</h2>
+        <form method="POST" action="{{ url_for('purchase_orders_generate') }}">
+            <button type="submit" class="btn btn-primary" {% if not negative_variants %}disabled{% endif %}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Generate PO
+            </button>
+        </form>
+    </div>
+    <p class="card-desc">
+        {% if negative_variants %}
+            {{ negative_variants|length }} variant(s) below optimal count. Generating a PO will create In Production units for each shortfall.
+        {% else %}
+            All variants are at or above optimal count. No PO needed.
+        {% endif %}
+    </p>
+
+    {% if negative_variants %}
+    <div class="table-wrapper" style="margin-top: 16px;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Design</th>
+                    <th>Size</th>
+                    <th>Finish</th>
+                    <th>Swing</th>
+                    <th>Glass Type</th>
+                    <th>SKU</th>
+                    <th style="text-align:center">In Stock</th>
+                    <th style="text-align:center">In Production</th>
+                    <th style="text-align:center">Pre-Sale</th>
+                    <th style="text-align:center">Optimal</th>
+                    <th style="text-align:center">Qty Needed</th>
+                    <th style="text-align:right">Unit Cost</th>
+                    <th style="text-align:right">Line Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% set ns = namespace(grand_total=0) %}
+                {% for v in negative_variants %}
+                    {% set qty = v.optimal_count - (v.in_stock + v.in_prod + v.pre_sale) %}
+                    {% set cost = calculate_cost(v.design_name, v.size) %}
+                    {% set line_total = cost[0] * qty %}
+                    {% set ns.grand_total = ns.grand_total + line_total %}
+                <tr>
+                    <td>{{ v.design_name }}</td>
+                    <td>{{ v.size }}</td>
+                    <td>{{ v.finish }}</td>
+                    <td>{{ v.swing }}</td>
+                    <td>{{ v.glass_type }}</td>
+                    <td class="font-mono">{{ v.sku }}</td>
+                    <td style="text-align:center">{{ v.in_stock }}</td>
+                    <td style="text-align:center">{{ v.in_prod }}</td>
+                    <td style="text-align:center">{{ v.pre_sale }}</td>
+                    <td style="text-align:center">{{ v.optimal_count }}</td>
+                    <td style="text-align:center"><span class="text-red font-bold">{{ qty }}</span></td>
+                    <td style="text-align:right">${{ '%.2f'|format(cost[0]) }}</td>
+                    <td style="text-align:right">${{ '%.2f'|format(line_total) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="12" style="text-align:right; font-weight:600; padding:12px 14px; border-top: 2px solid #E8E8ED;">PO Total (Cost)</td>
+                    <td style="text-align:right; font-weight:700; color:#0071E3; padding:12px 14px; border-top: 2px solid #E8E8ED;">${{ '%.2f'|format(ns.grand_total) }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Existing PO Files -->
+<div class="card card-no-padding">
+    <div class="card-header card-header-padded">
+        <h2 class="card-title">Purchase Order History</h2>
+        <span class="text-muted">{{ po_files|length }} file(s)</span>
+    </div>
+    {% if po_files %}
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Filename</th>
+                    <th>Date</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in po_files %}
+                <tr>
+                    <td class="font-mono">{{ f.filename }}</td>
+                    <td>{{ f.date }}</td>
+                    <td style="text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+                        <a href="{{ url_for('purchase_orders_view', filename=f.filename) }}" class="btn btn-sm btn-secondary">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                            View
+                        </a>
+                        <a href="{{ url_for('purchase_orders_download', filename=f.filename) }}" class="btn btn-sm btn-outline">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                <polyline points="7,10 12,15 17,10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            Download
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding: 48px;">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#D2D2D7" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14,2 14,8 20,8"/>
+        </svg>
+        <p>No purchase orders generated yet</p>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}

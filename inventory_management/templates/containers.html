@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}Containers{% endblock %}
+{% block page_title %}Containers{% endblock %}
+
+{% block content %}
+
+<!-- Upload a New Manifest -->
+<div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+        <h2 class="card-title">Upload a New Manifest</h2>
+    </div>
+    <p class="card-desc">Upload a container manifest CSV from your computer. It will be saved and ready to parse below.</p>
+    <form method="POST" action="{{ url_for('containers_upload') }}" enctype="multipart/form-data">
+        <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
+            <div class="form-group" style="flex: 0 0 180px; margin-bottom: 0;">
+                <label class="form-label" for="container_id_input">Container ID</label>
+                <input type="text" name="container_id_input" id="container_id_input"
+                       class="form-input" placeholder="e.g. CNT-005" required
+                       pattern="CNT-\d+" title="Must be in the format CNT-### (e.g. CNT-005)">
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 220px; margin-bottom: 0;">
+                <label class="form-label" for="manifest_upload">CSV File</label>
+                <input type="file" name="manifest_upload" id="manifest_upload"
+                       class="form-input" accept=".csv" required>
+            </div>
+            <div style="padding-bottom: 1px;">
+                <button type="submit" class="btn btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="17,8 12,3 7,8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    Upload Manifest
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<div class="two-col">
+
+    <!-- Parse a Container Manifest -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Parse a Container Manifest</h2>
+        </div>
+        <p class="card-desc">Select a manifest CSV to import container inventory into the database.</p>
+
+        {% if manifests %}
+        <form method="POST" action="{{ url_for('containers_parse') }}">
+            <div class="form-group">
+                <label class="form-label" for="manifest_file">Available Manifests</label>
+                <select name="manifest_file" id="manifest_file" class="form-select">
+                    {% for m in manifests %}
+                    <option value="{{ m.path }}">{{ m.filename }} — {{ m.unit_count }} unit(s)</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="8,17 3,12 8,7"/>
+                    <line x1="21" y1="12" x2="3" y2="12"/>
+                </svg>
+                Parse Container
+            </button>
+        </form>
+        {% else %}
+        <div class="empty-state">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#D2D2D7" stroke-width="1.5">
+                <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/>
+                <polyline points="13,2 13,9 20,9"/>
+            </svg>
+            <p>No manifest files found in <code>manifests/</code></p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Receive a Container -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Receive a Container</h2>
+        </div>
+        <p class="card-desc">Move all allocated units from a container into the warehouse.</p>
+
+        {% if containers %}
+        <form method="POST" action="{{ url_for('containers_receive') }}">
+            <div class="form-group">
+                <label class="form-label" for="container_id">Containers in Sales</label>
+                <select name="container_id" id="container_id" class="form-select">
+                    {% for c in containers %}
+                    <option value="{{ c.container_id }}">
+                        {{- c.container_id }} — {{ c.total }} total
+                        {%- if c.allocated %} ({{ c.allocated }} allocated{% if c.pre_sale %}, {{ c.pre_sale }} pre-sale{% endif %})
+                        {%- elif c.pre_sale %} ({{ c.pre_sale }} pre-sale)
+                        {%- endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="9,11 12,14 22,4"/>
+                    <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+                </svg>
+                Receive Container
+            </button>
+        </form>
+        {% else %}
+        <div class="empty-state">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#D2D2D7" stroke-width="1.5">
+                <rect x="1" y="3" width="15" height="13" rx="1"/>
+                <path d="M16 8h4l3 3v5h-7V8z"/>
+                <circle cx="5.5" cy="18.5" r="2.5"/>
+                <circle cx="18.5" cy="18.5" r="2.5"/>
+            </svg>
+            <p>No containers currently awaiting receipt</p>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

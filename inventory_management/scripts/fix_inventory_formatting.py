@@ -26,12 +26,12 @@ from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.styles import Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-INVENTORY_FILE = "inventory_master.xlsx"
+from constants import INVENTORY_FILE
 HEADER_ROW     = 1
 DATA_START     = 2
-TOTAL_COLS     = 12          # A (Design Name) … L (Status)
-VARIANCE_COL   = get_column_letter(10)   # J
-STATUS_COL     = get_column_letter(12)   # L
+TOTAL_COLS     = 13          # A (Design Name) … M (Status)
+VARIANCE_COL   = get_column_letter(11)   # K
+STATUS_COL     = get_column_letter(13)   # M
 
 # All colours use full 8-char ARGB (FF prefix = fully opaque).
 STATUS_CF = [
@@ -160,7 +160,7 @@ def fix_formatting(ws, data_start=DATA_START):
     ws.conditional_formatting.add(
         status_range,
         FormulaRule(
-            formula=[f'=LEFT($L{data_start},9)="Allocated"'],
+            formula=[f'=LEFT($M{data_start},9)="Allocated"'],
             fill=PatternFill("solid", fgColor=ALLOCATED_FILL),
             font=Font(name="Arial", size=10, color="FF000000"),
         ),
