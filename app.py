@@ -33,7 +33,16 @@ from db import (
     approve_warehouse_order, reject_warehouse_order,
     create_change_request, get_all_change_requests, get_change_request, update_change_request,
     get_warehouse_change_requests,
+    get_presale_pending_orders,
+    ack_warehouse_change_request,
+    get_units_on_order,
+    remove_unit_from_order,
+    add_unit_to_order,
+    log_cr_unit_change,
+    get_cr_unit_changes,
     CHECKLIST_ITEMS,
+    get_pipeline_orders, get_pipeline_order_detail,
+    upsert_order_details, add_order_photo, delete_order_photo,
 )
 from change_orders import SCENARIOS, NON_NEGOTIABLES, FRICTION_COLOR, determine_scenario, get_scenario
 from constants import MANIFEST_DIR, MANIFEST_PATTERN, DB_PATH, get_sku, calculate_cost
@@ -48,6 +57,8 @@ BASE_DIR   = os.path.dirname(__file__)
 PO_DIR     = os.path.join(BASE_DIR, 'purchase_orders')
 UPLOAD_DIR = os.path.join(BASE_DIR, 'static', 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+ORDER_UPLOAD_DIR = os.path.join(UPLOAD_DIR, 'orders')
+os.makedirs(ORDER_UPLOAD_DIR, exist_ok=True)
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp', 'heic'}
 
 # Keep legacy env-var credentials for seeding the admin on first run
@@ -306,11 +317,14 @@ def warehouse():
         GROUP BY wh.order_number
     """).fetchall()
     order_progress = {r['order_number']: (r['done'] or 0) for r in progress_rows}
-    change_requests = get_warehouse_change_requests(conn)
+    change_requests   = get_warehouse_change_requests(conn)
+    presale_pending   = get_presale_pending_orders(conn)
+    cr_unit_changes   = get_cr_unit_changes(conn, [cr['id'] for cr in change_requests])
     conn.close()
     return render_template('warehouse.html', summaries=summaries, units=units,
                            order_progress=order_progress, total_checklist=len(CHECKLIST_ITEMS),
-                           change_requests=change_requests, scenarios=SCENARIOS)
+                           change_requests=change_requests, scenarios=SCENARIOS,
+                           presale_pending=presale_pending, cr_unit_changes=cr_unit_changes)
 
 
 @app.route('/warehouse/prep/<int:wh_id>')
@@ -634,17 +648,45 @@ def containers_receive():
         conn = get_conn()
         date_arrived = datetime.date.today().isoformat()
 
-        # Move allocated units → Warehouse
-        sales = get_sales_by_container(conn, container_id)
-        for sale in sales:
-            move_to_warehouse(conn, sale['id'], date_arrived)
-
-        # Flip Pre-Sale units for this container → In Stock
+        # Flip Pre-Sale units for this container → In Stock first
         result = conn.execute(
             "UPDATE units SET status = 'In Stock', date_received = ? WHERE container_id = ? AND status LIKE 'Pre-Sale%'",
             (date_arrived, container_id)
         )
         in_stock_count = result.rowcount
+
+        # Clear awaiting_presale on sales_orders rows whose unit is now In Stock
+        conn.execute("""
+            UPDATE sales_orders SET awaiting_presale=0
+            WHERE container_id=? AND awaiting_presale=1
+        """, (container_id,))
+
+        # Move allocated units → Warehouse, but only for orders where ALL units are now ready
+        sales = get_sales_by_container(conn, container_id)
+        moved_orders = set()
+        for sale in sales:
+            order_num = sale['order_number']
+            if order_num in moved_orders:
+                continue
+            # Check if every unit's container has physically arrived
+            still_pending = conn.execute("""
+                SELECT COUNT(*) FROM sales_orders so
+                WHERE so.order_number=?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM units u
+                      WHERE u.container_id = so.container_id
+                        AND u.status = 'In Stock'
+                  )
+            """, (order_num,)).fetchone()[0]
+            if still_pending == 0:
+                # All units ready — move entire order to warehouse
+                all_rows = conn.execute(
+                    "SELECT * FROM sales_orders WHERE order_number=?", (order_num,)
+                ).fetchall()
+                for row in all_rows:
+                    move_to_warehouse(conn, row['id'], date_arrived)
+                moved_orders.add(order_num)
+
         conn.commit()
 
         if not sales and in_stock_count == 0:
@@ -713,30 +755,94 @@ def sales_available_units():
 @login_required
 def sales_change_order():
     order_number = request.form.get('order_number')
-    old_serial   = request.form.get('old_serial')
-    new_unit_id  = request.form.get('new_unit_id')
+    old_serial   = request.form.get('old_serial', '').strip()
+    new_unit_id  = request.form.get('new_unit_id', '').strip()
     source       = request.form.get('source', 'sales')
+    cr_id        = request.form.get('cr_id', '')
+    co_action    = request.form.get('co_action', 'swap')
 
-    if not all([order_number, old_serial, new_unit_id]):
-        flash('Missing required fields for change order.', 'error')
+    if not order_number:
+        flash('Missing order number.', 'error')
         return redirect(url_for('sales'))
 
     try:
+        from datetime import datetime
         username  = session.get('username', 'unknown')
         full_name = session.get('full_name', username)
-        conn = get_conn()
-        new_unit = conn.execute("SELECT serial_number FROM units WHERE id=?", (int(new_unit_id),)).fetchone()
-        new_serial = new_unit['serial_number'] if new_unit else new_unit_id
-        change_order_unit(conn, order_number, old_serial, int(new_unit_id), source=source)
-        log_activity(conn, username, full_name, 'Changed order unit',
-                     detail=f'{old_serial} → {new_serial}',
-                     order_number=order_number, serial_number=old_serial)
+        conn      = get_conn()
+        swap_ts   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if co_action == 'swap':
+            if not old_serial or not new_unit_id:
+                flash('Missing fields for swap.', 'error')
+                return redirect(url_for('change_request_detail', cr_id=cr_id) if cr_id else url_for('sales'))
+
+            old_info = conn.execute("""
+                SELECT u.serial_number, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku
+                FROM units u JOIN variants v ON v.id=u.variant_id WHERE u.serial_number=?
+            """, (old_serial,)).fetchone()
+            new_unit = conn.execute("""
+                SELECT u.id, u.serial_number, u.status, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku
+                FROM units u JOIN variants v ON v.id=u.variant_id WHERE u.id=?
+            """, (int(new_unit_id),)).fetchone()
+            new_serial = new_unit['serial_number'] if new_unit else new_unit_id
+            is_presale = new_unit and new_unit['status'].startswith('Pre-Sale')
+
+            change_order_unit(conn, order_number, old_serial, int(new_unit_id), source=source)
+            if cr_id:
+                if old_info:
+                    log_cr_unit_change(conn, int(cr_id), 'removed', dict(old_info), swap_ts=swap_ts)
+                if new_unit:
+                    log_cr_unit_change(conn, int(cr_id), 'added', dict(new_unit), swap_ts=swap_ts)
+
+            action = 'Swapped unit (pre-sale — order moved to Allocated)' if is_presale else 'Changed order unit'
+            log_activity(conn, username, full_name, action,
+                         detail=f'{old_serial} → {new_serial}',
+                         order_number=order_number, serial_number=old_serial)
+            if is_presale:
+                flash(f'Order {order_number}: swapped to pre-sale — order moved back to Allocated.', 'warning')
+            else:
+                flash(f'Order {order_number}: unit swapped successfully.', 'success')
+
+        elif co_action == 'remove':
+            if not old_serial:
+                flash('No unit selected to remove.', 'error')
+                return redirect(url_for('change_request_detail', cr_id=cr_id) if cr_id else url_for('sales'))
+
+            old_info = conn.execute("""
+                SELECT u.serial_number, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku
+                FROM units u JOIN variants v ON v.id=u.variant_id WHERE u.serial_number=?
+            """, (old_serial,)).fetchone()
+            remove_unit_from_order(conn, order_number, old_serial, source)
+            if cr_id and old_info:
+                log_cr_unit_change(conn, int(cr_id), 'removed', dict(old_info), swap_ts=swap_ts)
+            log_activity(conn, username, full_name, 'Removed unit from order',
+                         detail=old_serial, order_number=order_number)
+            flash(f'Order {order_number}: unit {old_serial} removed.', 'success')
+
+        elif co_action == 'add':
+            if not new_unit_id:
+                flash('No unit selected to add.', 'error')
+                return redirect(url_for('change_request_detail', cr_id=cr_id) if cr_id else url_for('sales'))
+
+            customer = request.form.get('customer', '')
+            added = add_unit_to_order(conn, order_number, customer, int(new_unit_id), source)
+            if cr_id:
+                log_cr_unit_change(conn, int(cr_id), 'added', added, swap_ts=swap_ts)
+            log_activity(conn, username, full_name, 'Added unit to order',
+                         detail=added.get('serial_number'), order_number=order_number)
+            flash(f'Order {order_number}: unit {added.get("serial_number")} added.', 'success')
+
         export_excel(conn)
         conn.close()
-        flash(f'Order {order_number} updated — unit swapped successfully.', 'success')
-    except Exception as e:
-        flash(f'Error processing change order: {e}', 'error')
 
+    except Exception as e:
+        flash(f'Error: {e}', 'error')
+
+    if cr_id:
+        return redirect(url_for('change_request_detail', cr_id=cr_id))
+    if source == 'warehouse':
+        return redirect(url_for('warehouse'))
     return redirect(url_for('sales'))
 
 
@@ -918,7 +1024,7 @@ def change_requests():
     conn = get_conn()
     requests = get_all_change_requests(conn)
     conn.close()
-    return render_template('change_requests.html',
+    return render_template('change_orders.html',
                            requests=requests, scenarios=SCENARIOS)
 
 
@@ -932,8 +1038,20 @@ def change_request_new():
     needs_question = None   # 'pickup' | 'delivery' | None
     order_info     = None
 
+    order_units     = []
+    available_units = []
+
     if order_number:
         conn = get_conn()
+        # Redirect to existing open CO for this order if one exists
+        existing_cr = conn.execute(
+            "SELECT id FROM change_requests WHERE order_number=? AND status != 'Resolved' ORDER BY id DESC LIMIT 1",
+            (order_number,)
+        ).fetchone()
+        if existing_cr:
+            conn.close()
+            return redirect(url_for('change_request_detail', cr_id=existing_cr['id']))
+
         so_row = conn.execute(
             "SELECT status FROM sales_orders WHERE order_number=? LIMIT 1",
             (order_number,)
@@ -942,15 +1060,15 @@ def change_request_new():
             "SELECT status, fulfillment_type FROM warehouse WHERE order_number=? LIMIT 1",
             (order_number,)
         ).fetchone()
+        order_units     = [dict(r) for r in get_units_on_order(conn, order_number)]
+        available_units = [dict(r) for r in get_available_units(conn)]
         conn.close()
 
         if so_row:
-            # Still in sales_orders — allocated/pre-sale, hasn't moved to warehouse yet
             auto_scenario = '1A'
             order_info = {'label': f'Allocated · {so_row["status"]}'}
         elif wh_row:
             status = wh_row['status']
-            ft     = wh_row['fulfillment_type'] or 'pickup'
             order_info = {'label': f'Warehouse · {status}'}
             if status in ('In Prep', 'Pending Review'):
                 auto_scenario = '1A'
@@ -961,10 +1079,11 @@ def change_request_new():
             else:
                 auto_scenario = '1A'
 
-    return render_template('change_request_new.html',
+    return render_template('change_order_new.html',
                            order_number=order_number, customer=customer,
                            order_info=order_info, auto_scenario=auto_scenario,
-                           needs_question=needs_question, scenarios=SCENARIOS)
+                           needs_question=needs_question, scenarios=SCENARIOS,
+                           order_units=order_units, available_units=available_units)
 
 
 @app.route('/change-requests/create', methods=['POST'])
@@ -1008,14 +1127,68 @@ def change_request_create():
         flash('Invalid scenario.', 'error')
         return redirect(url_for('change_request_new', order=order_number, customer=customer))
 
-    conn = get_conn()
+    co_action   = request.form.get('co_action', '').strip()   # 'swap' | 'remove' | 'add'
+    old_serial  = request.form.get('old_serial', '').strip()
+    new_unit_id = request.form.get('new_unit_id', '').strip()
+    swap_source = request.form.get('swap_source', 'sales').strip()
+
+    conn  = get_conn()
     cr_id = create_change_request(conn, order_number, customer, 'stock', scenario_id,
                                   request_detail, notes, username)
-    log_activity(conn, username, full_name, 'Created change request',
+    log_activity(conn, username, full_name, 'Created change order',
                  detail=f'Scenario {scenario_id}: {SCENARIOS[scenario_id]["title"]}',
                  order_number=order_number)
+
+    action_msg = ''
+    try:
+        if co_action == 'swap' and old_serial and new_unit_id:
+            old_info = conn.execute("""
+                SELECT u.serial_number, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku
+                FROM units u JOIN variants v ON v.id=u.variant_id WHERE u.serial_number=?
+            """, (old_serial,)).fetchone()
+            new_unit = conn.execute("""
+                SELECT u.id, u.serial_number, u.status, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku
+                FROM units u JOIN variants v ON v.id=u.variant_id WHERE u.id=?
+            """, (int(new_unit_id),)).fetchone()
+            is_presale = new_unit and new_unit['status'].startswith('Pre-Sale')
+            change_order_unit(conn, order_number, old_serial, int(new_unit_id), source=swap_source)
+            if old_info:
+                log_cr_unit_change(conn, cr_id, 'removed', dict(old_info))
+            if new_unit:
+                log_cr_unit_change(conn, cr_id, 'added', dict(new_unit))
+            act = 'Swapped unit (pre-sale)' if is_presale else 'Swapped unit'
+            log_activity(conn, username, full_name, act,
+                         detail=f'{old_serial} → {new_unit["serial_number"] if new_unit else new_unit_id}',
+                         order_number=order_number)
+            action_msg = f' Swapped {old_serial} → {new_unit["serial_number"] if new_unit else new_unit_id}.'
+            export_excel(conn)
+
+        elif co_action == 'remove' and old_serial:
+            old_info = conn.execute("""
+                SELECT u.serial_number, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku
+                FROM units u JOIN variants v ON v.id=u.variant_id WHERE u.serial_number=?
+            """, (old_serial,)).fetchone()
+            remove_unit_from_order(conn, order_number, old_serial, swap_source)
+            if old_info:
+                log_cr_unit_change(conn, cr_id, 'removed', dict(old_info))
+            log_activity(conn, username, full_name, 'Removed unit from order',
+                         detail=old_serial, order_number=order_number)
+            action_msg = f' Removed {old_serial} from order.'
+            export_excel(conn)
+
+        elif co_action == 'add' and new_unit_id:
+            added = add_unit_to_order(conn, order_number, customer, int(new_unit_id), swap_source)
+            log_cr_unit_change(conn, cr_id, 'added', added)
+            log_activity(conn, username, full_name, 'Added unit to order',
+                         detail=added.get('serial_number'), order_number=order_number)
+            action_msg = f' Added {added.get("serial_number")} to order.'
+            export_excel(conn)
+
+    except Exception as e:
+        action_msg = f' (Action failed: {e})'
+
     conn.close()
-    flash(f'Change request created — scenario {scenario_id}.', 'success')
+    flash(f'Change order created — scenario {scenario_id}.{action_msg}', 'success')
     return redirect(url_for('change_request_detail', cr_id=cr_id))
 
 
@@ -1026,7 +1199,7 @@ def change_request_detail(cr_id):
     cr   = get_change_request(conn, cr_id)
     if not cr:
         conn.close()
-        flash('Change request not found.', 'error')
+        flash('Change order not found.', 'error')
         return redirect(url_for('change_requests'))
 
     # Fetch the order's current units (sales_orders or warehouse)
@@ -1042,17 +1215,19 @@ def change_request_detail(cr_id):
         WHERE wh.order_number = ?
     """, (cr['order_number'], cr['order_number'])).fetchall()
 
-    available = [dict(u) for u in get_available_units(conn)]
+    available    = [dict(u) for u in get_available_units(conn)]
+    unit_changes = get_cr_unit_changes(conn, [cr_id]).get(cr_id, [])
     conn.close()
 
     scenario = get_scenario(cr['scenario_id'])
     friction_colors = FRICTION_COLOR.get(scenario.get('friction_level', 'low'), ('#F5F5F7', '#6E6E73'))
-    return render_template('change_request_detail.html',
+    return render_template('change_order_detail.html',
                            cr=cr, scenario=scenario,
                            friction_colors=friction_colors,
                            non_negotiables=NON_NEGOTIABLES,
                            order_units=order_units,
-                           available_units=available)
+                           available_units=available,
+                           unit_changes=unit_changes)
 
 
 @app.route('/change-requests/<int:cr_id>/update', methods=['POST'])
@@ -1066,12 +1241,123 @@ def change_request_update(cr_id):
     conn = get_conn()
     cr   = get_change_request(conn, cr_id)
     update_change_request(conn, cr_id, status, resolution, notes)
-    log_activity(conn, username, full_name, f'Change request → {status}',
+    log_activity(conn, username, full_name, f'Change order → {status}',
                  detail=resolution or None,
                  order_number=cr['order_number'] if cr else None)
     conn.close()
-    flash(f'Change request updated — {status}.', 'success')
+    flash(f'Change order updated — {status}.', 'success')
     return redirect(url_for('change_request_detail', cr_id=cr_id))
+
+
+@app.route('/change-requests/<int:cr_id>/warehouse-ack', methods=['POST'])
+@login_required
+def change_request_warehouse_ack(cr_id):
+    username  = session.get('username', 'unknown')
+    full_name = session.get('full_name', username)
+    conn = get_conn()
+    cr   = get_change_request(conn, cr_id)
+    ack_warehouse_change_request(conn, cr_id, username)
+    log_activity(conn, username, full_name, 'Change order acknowledged (warehouse)',
+                 order_number=cr['order_number'] if cr else None)
+    conn.close()
+    flash('Marked as adjusted — change order removed from warehouse alerts.', 'success')
+    return redirect(url_for('warehouse'))
+
+
+# ── Sales Pipeline ─────────────────────────────────────────────────────────────
+
+STAGE_LABELS = {
+    'presale':        'Pre-Sale',
+    'allocated':      'Allocated',
+    'in_prep':        'In Prep',
+    'pending_review': 'Pending Review',
+    'ready_pickup':   'Ready for Pickup',
+    'ready_delivery': 'Ready for Delivery',
+    'fulfilled':      'Fulfilled',
+}
+STAGE_ORDER = ['presale', 'allocated', 'in_prep', 'pending_review', 'ready_pickup', 'ready_delivery', 'fulfilled']
+
+
+@app.route('/pipeline')
+@admin_required
+def pipeline():
+    conn = get_conn()
+    orders = get_pipeline_orders(conn)
+    conn.close()
+    return render_template('pipeline.html', orders=orders,
+                           stage_labels=STAGE_LABELS, stage_order=STAGE_ORDER)
+
+
+@app.route('/pipeline/<order_number>')
+@admin_required
+def pipeline_detail(order_number):
+    conn = get_conn()
+    detail = get_pipeline_order_detail(conn, order_number)
+    # Sidebar: all orders in the same stage
+    stage = request.args.get('stage') or detail.get('stage', '')
+    all_orders = get_pipeline_orders(conn)
+    sidebar_orders = [o for o in all_orders if o['pipeline_stage'] == stage]
+    conn.close()
+    return render_template('pipeline_detail.html', detail=detail, order_number=order_number,
+                           sidebar_orders=sidebar_orders, sidebar_stage=stage,
+                           stage_labels=STAGE_LABELS)
+
+
+@app.route('/pipeline/<order_number>/details', methods=['POST'])
+@admin_required
+def pipeline_update_details(order_number):
+    conn = get_conn()
+    upsert_order_details(
+        conn, order_number,
+        request.form.get('phone', ''),
+        request.form.get('email', ''),
+        request.form.get('address', ''),
+        request.form.get('city', ''),
+        request.form.get('state', ''),
+        request.form.get('zip', ''),
+        request.form.get('notes', ''),
+    )
+    conn.close()
+    flash('Contact info saved.', 'success')
+    return redirect(url_for('pipeline_detail', order_number=order_number))
+
+
+@app.route('/pipeline/<order_number>/photos', methods=['POST'])
+@admin_required
+def pipeline_upload_photo(order_number):
+    f = request.files.get('photo')
+    if not f or f.filename == '':
+        flash('No file selected.', 'error')
+        return redirect(url_for('pipeline_detail', order_number=order_number))
+    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+    if ext not in ALLOWED_EXTENSIONS:
+        flash('File type not allowed.', 'error')
+        return redirect(url_for('pipeline_detail', order_number=order_number))
+    order_dir = os.path.join(ORDER_UPLOAD_DIR, order_number)
+    os.makedirs(order_dir, exist_ok=True)
+    ts = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+    filename = f"{ts}_{secure_filename(f.filename)}"
+    f.save(os.path.join(order_dir, filename))
+    caption = request.form.get('caption', '')
+    conn = get_conn()
+    add_order_photo(conn, order_number, filename, caption, session.get('username'))
+    conn.close()
+    flash('Photo uploaded.', 'success')
+    return redirect(url_for('pipeline_detail', order_number=order_number))
+
+
+@app.route('/pipeline/photos/<int:photo_id>/delete', methods=['POST'])
+@admin_required
+def pipeline_delete_photo(photo_id):
+    conn = get_conn()
+    filename, order_number = delete_order_photo(conn, photo_id)
+    conn.close()
+    if filename and order_number:
+        try:
+            os.remove(os.path.join(ORDER_UPLOAD_DIR, order_number, filename))
+        except OSError:
+            pass
+    return redirect(url_for('pipeline_detail', order_number=order_number) if order_number else url_for('pipeline'))
 
 
 if __name__ == '__main__':

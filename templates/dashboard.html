@@ -83,6 +83,9 @@
                         <th>Design</th>
                         <th>Size</th>
                         <th>Finish</th>
+                        <th>Swing</th>
+                        <th>Glass</th>
+                        <th>SKU</th>
                         <th style="text-align:center">Have</th>
                         <th style="text-align:center">Need</th>
                         <th style="text-align:center">Gap</th>
@@ -94,6 +97,9 @@
                         <td>{{ v.design_name }}</td>
                         <td>{{ v.size }}</td>
                         <td>{{ v.finish }}</td>
+                        <td>{{ v.swing }}</td>
+                        <td>{{ v.glass_type }}</td>
+                        <td><code>{{ v.sku }}</code></td>
                         <td style="text-align:center">{{ v.in_stock + v.in_prod + v.pre_sale }}</td>
                         <td style="text-align:center">{{ v.optimal_count }}</td>
                         <td style="text-align:center"><span class="text-red font-bold">{{ v.variance }}</span></td>

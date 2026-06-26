@@ -25,29 +25,50 @@
 {% block content %}
 
 <!-- Change Order Modal -->
-<div id="changeOrderModal" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.4); align-items:center; justify-content:center;">
-    <div style="background:#fff; border-radius:16px; padding:28px; width:560px; max-width:95vw; box-shadow:0 20px 60px rgba(0,0,0,0.2);">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px;">
+<div id="changeOrderModal" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.5); align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:16px; padding:28px 28px 22px; width:700px; max-width:96vw; max-height:88vh; display:flex; flex-direction:column; box-shadow:0 24px 64px rgba(0,0,0,0.22);">
+
+        <!-- Header -->
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; flex-shrink:0;">
             <div>
-                <h2 style="font-size:17px; font-weight:600; color:#1D1D1F; margin:0 0 4px;">Change Order</h2>
-                <p id="coOrderLabel" style="font-size:13px; color:#6E6E73; margin:0;"></p>
+                <h2 style="font-size:17px; font-weight:600; color:#1D1D1F; margin:0 0 4px;">Select Replacement Unit</h2>
+                <p id="coCurrentUnit" style="font-size:13px; color:#6E6E73; margin:0;">Replacing: —</p>
             </div>
-            <button onclick="closeChangeOrder()" style="background:none; border:none; cursor:pointer; color:#6E6E73; font-size:22px; line-height:1; padding:0;">&times;</button>
+            <button onclick="closeChangeOrder()" style="background:none; border:none; cursor:pointer; color:#6E6E73; font-size:24px; line-height:1; padding:0; margin-left:16px;">&times;</button>
         </div>
-        <div style="background:#F5F5F7; border-radius:10px; padding:14px 16px; margin-bottom:20px;">
-            <p style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 6px;">Current Unit</p>
-            <p id="coCurrentUnit" style="font-size:14px; color:#1D1D1F; margin:0;"></p>
+
+        <!-- Search -->
+        <input type="text" id="coSearch" placeholder="Filter by design, size, finish, or serial…" oninput="filterCoUnits()"
+               style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none; margin-bottom:10px; flex-shrink:0;">
+
+        <!-- Legend -->
+        <div style="display:flex; gap:16px; margin-bottom:10px; flex-shrink:0;">
+            <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#1D1D1F;">
+                <span style="display:inline-block; width:12px; height:12px; border-radius:3px; background:#D4EDDA; border:1px solid #28A745;"></span> In Stock — ships immediately
+            </div>
+            <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#1D1D1F;">
+                <span style="display:inline-block; width:12px; height:12px; border-radius:3px; background:#FFF3CD; border:1px solid #FFC107;"></span> Pre-Sale — order stays Allocated until arrival
+            </div>
         </div>
-        <input type="text" id="coSearch" placeholder="Search design, size, finish…" oninput="filterCoUnits()"
-               style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none; margin-bottom:10px;">
-        <div id="coUnitList" style="max-height:260px; overflow-y:auto; border:1.5px solid #D2D2D7; border-radius:8px; background:#fff;"></div>
-        <p id="coNoResults" style="display:none; font-size:13px; color:#6E6E73; text-align:center; padding:16px 0; margin:0;">No available units match your search.</p>
-        <form id="coForm" method="POST" action="{{ url_for('sales_change_order') }}" style="margin-top:16px;">
+
+        <!-- Accordion list -->
+        <div id="coUnitList" style="flex:1; overflow-y:auto; border:1.5px solid #D2D2D7; border-radius:10px; background:#FAFAFA;"></div>
+        <p id="coNoResults" style="display:none; font-size:13px; color:#6E6E73; text-align:center; padding:20px 0; margin:0;">No units match your search.</p>
+
+        <!-- Pre-sale warning -->
+        <div id="coPresaleWarning" style="display:none; margin-top:12px; padding:12px 14px; background:#FFF3E0; border:1.5px solid #FFB300; border-radius:8px; flex-shrink:0;">
+            <div style="font-size:13px; font-weight:600; color:#E65100; margin-bottom:4px;">⚠ Pre-Sale Unit Selected</div>
+            <div style="font-size:13px; color:#5D4037; line-height:1.5;">This unit hasn't arrived yet. The order will remain Allocated until the pre-sale container lands.</div>
+        </div>
+
+        <!-- Footer form -->
+        <form id="coForm" method="POST" action="{{ url_for('sales_change_order') }}" style="margin-top:14px; flex-shrink:0;">
             <input type="hidden" name="order_number" id="coOrderNumber">
             <input type="hidden" name="old_serial"   id="coOldSerial">
             <input type="hidden" name="new_unit_id"  id="coNewUnitId">
             <input type="hidden" name="source"       id="coSource">
-            <div style="display:flex; gap:10px; justify-content:flex-end;">
+            <div style="display:flex; gap:10px; justify-content:flex-end; align-items:center;">
+                <span id="coSelectedLabel" style="font-size:13px; color:#6E6E73; flex:1;"></span>
                 <button type="button" onclick="closeChangeOrder()" class="btn btn-secondary">Cancel</button>
                 <button type="submit" id="coSubmit" class="btn btn-primary" disabled>Confirm Swap</button>
             </div>
@@ -131,9 +152,16 @@
                     </td>
                     <td>
                         {% if is_admin %}
-                        <a href="{{ url_for('change_request_new', order=s.order_number, customer=s.customer) }}"
-                           class="btn btn-sm btn-secondary" onclick="event.stopPropagation();"
-                           title="Log a customer change request for this order">Change Request</a>
+                        <div style="display:flex; gap:5px;" onclick="event.stopPropagation();">
+                            <a href="{{ url_for('change_request_new', order=s.order_number, customer=s.customer) }}"
+                               class="btn btn-sm btn-secondary">Change Order</a>
+                            <form method="POST" action="{{ url_for('containers_cancel') }}"
+                                  onsubmit="return confirm('Cancel all units on order {{ s.order_number }}? This cannot be undone.')">
+                                <input type="hidden" name="order_number" value="{{ s.order_number }}">
+                                <input type="hidden" name="source" value="sales">
+                                <button type="submit" class="btn btn-sm btn-danger">Cancel Order</button>
+                            </form>
+                        </div>
                         {% endif %}
                     </td>
                 </tr>
@@ -150,38 +178,19 @@
                     <td></td>
                     <td></td>
                     <td style="font-size:13px; font-weight:500; color:#1D1D1F;">
-                        {{ u.design_name }} <span style="font-weight:400; color:#6E6E73;">· {{ u.size }} · {{ u.finish }}</span>
+                        {{ u.design_name }} <span style="font-weight:400; color:#6E6E73;">· {{ u.size }} · {{ u.finish }} · {{ u.swing }} · {{ u.glass_type }}</span>
                     </td>
                     <td class="font-mono" style="font-size:12px; color:#8E8E93;">{{ u.container_id or '—' }}</td>
                     <td>
-                        {% set ust = u.status or '' %}
-                        {% if ust == 'Ready for Pickup' %}
-                            <span class="badge badge-in-stock" style="font-size:11px;">Ready</span>
-                        {% elif ust.startswith('Allocated') %}
-                            <span class="badge badge-allocated" style="font-size:11px;">Allocated</span>
-                        {% elif ust == 'In Prep' %}
-                            <span class="badge badge-in-prep" style="font-size:11px;">In Prep</span>
+                        {% if u.source == 'warehouse' %}
+                            <span style="font-size:11px; font-weight:600; padding:2px 9px; border-radius:20px; background:#E3F2FD; color:#1565C0; white-space:nowrap;">{{ u.status }}</span>
+                        {% elif u.arrived %}
+                            <span style="font-size:11px; font-weight:600; padding:2px 9px; border-radius:20px; background:#E8F5E9; color:#2E7D32; white-space:nowrap;">In Stock</span>
                         {% else %}
-                            <span class="badge" style="font-size:11px;">{{ ust }}</span>
+                            <span style="font-size:11px; font-weight:600; padding:2px 9px; border-radius:20px; background:#FFF3CD; color:#856404; white-space:nowrap;">Pre-Sale · {{ u.container_id or '?' }}</span>
                         {% endif %}
                     </td>
-                    <td>
-                        {% if is_admin %}
-                        <div style="display:flex; gap:5px;">
-                            <button class="btn btn-sm btn-secondary"
-                                onclick="openChangeOrder('{{ s.order_number }}','{{ u.serial_number }}','{{ u.design_name }}','{{ u.size }}','{{ u.finish }}','{{ u.source }}')">
-                                Change
-                            </button>
-                            <form method="POST" action="{{ url_for('containers_cancel') }}"
-                                  onsubmit="return confirm('Cancel this unit from {{ s.order_number }}?')">
-                                <input type="hidden" name="order_number" value="{{ s.order_number }}">
-                                <input type="hidden" name="source" value="{{ u.source }}">
-                                <input type="hidden" name="serial" value="{{ u.serial_number }}">
-                                <button type="submit" class="btn btn-sm btn-danger">Cancel</button>
-                            </form>
-                        </div>
-                        {% endif %}
-                    </td>
+                    <td></td>
                 </tr>
                 {% endfor %}
 
@@ -255,16 +264,120 @@ function applySalesFilters() {
 }
 
 // ── Change Order modal ─────────────────────────────────────────────────────────
+const coOpenVariants = new Set();
+
+function coVariantKey(u) {
+    return `${u.design_name}||${u.size}||${u.finish}||${u.swing}||${u.glass_type}`;
+}
+
+function coGroupByVariant(units) {
+    const map = new Map();
+    units.forEach(u => {
+        const k = coVariantKey(u);
+        if (!map.has(k)) map.set(k, { meta: u, inStock: [], preSale: [] });
+        if (u.status === 'In Stock') map.get(k).inStock.push(u);
+        else map.get(k).preSale.push(u);
+    });
+    return map;
+}
+
+function coSelectUnit(u, rowEl) {
+    document.querySelectorAll('#coUnitList .co-serial-row').forEach(r => {
+        r.style.outline = 'none';
+        r.style.fontWeight = '400';
+    });
+    rowEl.style.outline = '2px solid #0071E3';
+    rowEl.style.fontWeight = '600';
+    document.getElementById('coNewUnitId').value = u.id;
+    selectedUnitId = u.id;
+    const isPresale = u.status !== 'In Stock';
+    document.getElementById('coPresaleWarning').style.display = isPresale ? 'block' : 'none';
+    document.getElementById('coSelectedLabel').textContent =
+        `Selected: ${u.design_name} · ${u.size} · ${u.finish} · ${u.serial_number || '—'}`;
+    const btn = document.getElementById('coSubmit');
+    btn.textContent = isPresale ? 'Confirm (Pre-Sale)' : 'Confirm Swap';
+    btn.className   = isPresale ? 'btn btn-warning' : 'btn btn-primary';
+    btn.disabled    = false;
+}
+
+function renderCoUnits(units) {
+    const list  = document.getElementById('coUnitList');
+    const noRes = document.getElementById('coNoResults');
+    list.innerHTML = '';
+    if (!units.length) { list.style.display = 'none'; noRes.style.display = 'block'; return; }
+    list.style.display = 'block'; noRes.style.display = 'none';
+
+    const grouped = coGroupByVariant(units);
+    grouped.forEach((g, key) => {
+        const u = g.meta;
+        const stockCount   = g.inStock.length;
+        const presaleCount = g.preSale.length;
+        const isOpen = coOpenVariants.has(key) || units.length <= 6;
+
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'border-bottom:1px solid #E8E8ED;';
+
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer; background:#F5F5F7; user-select:none;';
+        hdr.innerHTML = `
+            <span class="co-caret" style="font-size:11px; color:#6E6E73; transition:transform .15s; display:inline-block; transform:${isOpen ? 'rotate(90deg)' : 'rotate(0deg)'};">&#9654;</span>
+            <span style="font-size:13px; font-weight:600; color:#1D1D1F; flex:1;">${u.design_name} <span style="font-weight:400; color:#6E6E73;">· ${u.size} · ${u.finish} · ${u.swing} · ${u.glass_type}</span></span>
+            <span style="font-size:11px; font-weight:600; display:flex; gap:6px;">
+                ${stockCount   ? `<span style="background:#D4EDDA; color:#155724; padding:2px 8px; border-radius:20px;">${stockCount} in stock</span>` : ''}
+                ${presaleCount ? `<span style="background:#FFF3CD; color:#856404; padding:2px 8px; border-radius:20px;">${presaleCount} pre-sale</span>` : ''}
+            </span>`;
+
+        const body = document.createElement('div');
+        body.style.cssText = `display:${isOpen ? 'block' : 'none'}; background:#fff;`;
+
+        hdr.addEventListener('click', () => {
+            const open = body.style.display !== 'none';
+            body.style.display = open ? 'none' : 'block';
+            hdr.querySelector('.co-caret').style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+            open ? coOpenVariants.delete(key) : coOpenVariants.add(key);
+        });
+
+        [...g.inStock.map(u => ({ u, isPresale: false })),
+         ...g.preSale.map(u => ({ u, isPresale: true  }))
+        ].forEach(({ u, isPresale }) => {
+            const row = document.createElement('div');
+            row.className = 'co-serial-row';
+            const bg      = isPresale ? '#FFFDF0' : '#F6FFF8';
+            const dot     = isPresale ? '#FFC107' : '#28A745';
+            const label   = isPresale ? `Pre-Sale · ${u.container_id || 'TBD'}` : 'In Stock';
+            const labelClr = isPresale ? '#856404' : '#155724';
+            row.style.cssText = `display:flex; align-items:center; gap:12px; padding:9px 14px 9px 36px; cursor:pointer; background:${bg}; border-top:1px solid #F0F0F5; transition:filter .1s;`;
+            row.dataset.unitId = u.id;
+            row.innerHTML = `
+                <span style="width:10px; height:10px; border-radius:50%; background:${dot}; flex-shrink:0;"></span>
+                <span style="font-family:monospace; font-size:13px; color:#1D1D1F; flex:1;">${u.serial_number || '—'}</span>
+                <span style="font-size:12px; font-weight:500; color:${labelClr};">${label}</span>`;
+            row.addEventListener('mouseenter', () => { if (selectedUnitId !== u.id) row.style.filter = 'brightness(0.96)'; });
+            row.addEventListener('mouseleave', () => { row.style.filter = ''; });
+            row.addEventListener('click', () => coSelectUnit(u, row));
+            body.appendChild(row);
+        });
+
+        wrapper.appendChild(hdr);
+        wrapper.appendChild(body);
+        list.appendChild(wrapper);
+    });
+}
+
 function openChangeOrder(orderNum, serial, design, size, finish, source) {
-    document.getElementById('coOrderLabel').textContent = orderNum;
-    document.getElementById('coCurrentUnit').textContent = `${design} · ${size} · ${finish} · ${serial}`;
+    document.getElementById('coCurrentUnit').textContent = `Replacing: ${design} · ${size} · ${finish} · ${serial}`;
     document.getElementById('coOrderNumber').value = orderNum;
     document.getElementById('coOldSerial').value   = serial;
     document.getElementById('coSource').value      = source || 'sales';
     document.getElementById('coNewUnitId').value   = '';
     document.getElementById('coSubmit').disabled   = true;
+    document.getElementById('coSubmit').textContent = 'Confirm Swap';
+    document.getElementById('coSubmit').className  = 'btn btn-primary';
     document.getElementById('coSearch').value      = '';
+    document.getElementById('coSelectedLabel').textContent = '';
+    document.getElementById('coPresaleWarning').style.display = 'none';
     selectedUnitId = null;
+    coOpenVariants.clear();
     renderCoUnits(AVAILABLE_UNITS);
     document.getElementById('changeOrderModal').style.display = 'flex';
     setTimeout(() => document.getElementById('coSearch').focus(), 50);
@@ -276,42 +389,17 @@ function closeChangeOrder() {
 
 function filterCoUnits() {
     const q = document.getElementById('coSearch').value.toLowerCase();
-    renderCoUnits(q ? AVAILABLE_UNITS.filter(u =>
+    const filtered = q ? AVAILABLE_UNITS.filter(u =>
         u.design_name.toLowerCase().includes(q) ||
         u.size.toLowerCase().includes(q) ||
         u.finish.toLowerCase().includes(q) ||
-        (u.serial_number || '').toLowerCase().includes(q)
-    ) : AVAILABLE_UNITS);
-}
-
-function renderCoUnits(units) {
-    const list   = document.getElementById('coUnitList');
-    const noRes  = document.getElementById('coNoResults');
-    list.innerHTML = '';
-    if (!units.length) { list.style.display = 'none'; noRes.style.display = 'block'; return; }
-    list.style.display = 'block'; noRes.style.display = 'none';
-    let lastGroup = null;
-    units.forEach(u => {
-        const group = u.status === 'In Stock' ? 'In Stock' : 'Pre-Sale';
-        if (group !== lastGroup) {
-            lastGroup = group;
-            const hdr = document.createElement('div');
-            hdr.style.cssText = 'padding:6px 14px 4px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; background:#F5F5F7; border-bottom:1px solid #E8E8ED;';
-            hdr.textContent = group === 'In Stock' ? '⚡ In Stock — Available Now' : '🕐 Pre-Sale';
-            list.appendChild(hdr);
-        }
-        const row = document.createElement('div');
-        row.dataset.unitId = u.id;
-        row.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:10px 14px; cursor:pointer; border-bottom:1px solid #F0F0F5; font-size:13px; transition:background .1s;';
-        row.innerHTML = `<span style="font-weight:500;">${u.design_name} <span style="font-weight:400;color:#6E6E73;">· ${u.size} · ${u.finish}</span></span><span style="font-family:monospace;font-size:12px;color:#6E6E73;">${u.serial_number || '—'}</span>`;
-        row.addEventListener('click', () => {
-            document.querySelectorAll('#coUnitList [data-unit-id]').forEach(r => r.style.background = '');
-            row.style.background = '#EFF6FF';
-            document.getElementById('coNewUnitId').value = u.id;
-            document.getElementById('coSubmit').disabled = false;
-        });
-        list.appendChild(row);
-    });
+        u.swing.toLowerCase().includes(q) ||
+        u.glass_type.toLowerCase().includes(q) ||
+        (u.serial_number || '').toLowerCase().includes(q) ||
+        (u.container_id  || '').toLowerCase().includes(q)
+    ) : AVAILABLE_UNITS;
+    if (q) filtered.forEach(u => coOpenVariants.add(coVariantKey(u)));
+    renderCoUnits(filtered);
 }
 
 document.getElementById('changeOrderModal').addEventListener('click', function(e) {

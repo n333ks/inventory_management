@@ -1,0 +1,611 @@
+{% extends "base.html" %}
+
+{% block title %}Change Order: {{ cr.order_number }}{% endblock %}
+{% block page_title %}Change Order: {{ cr.order_number }}{% endblock %}
+
+{% block page_actions %}
+<div style="display:flex; gap:10px; align-items:center;">
+    <a href="{{ url_for('change_requests') }}" class="btn btn-secondary">← All Change Orders</a>
+</div>
+{% endblock %}
+
+{% block content %}
+{% set fl = scenario.get('friction_level', 'low') %}
+{% set fc_bg, fc_text = friction_colors %}
+
+<div style="display:grid; grid-template-columns:1fr 340px; gap:16px; align-items:start;">
+
+<!-- Left column: procedure steps -->
+<div>
+
+    <!-- Scenario header -->
+    <div class="card" style="margin-bottom:16px; border-left:4px solid {{ fc_text }};">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+            <div>
+                <div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin-bottom:4px;">
+                    {{ scenario.get('part_title', '') }} · Scenario {{ cr.scenario_id }}
+                </div>
+                <h2 style="font-size:18px; font-weight:700; color:#1D1D1F; margin:0 0 6px;">{{ scenario.get('title', '') }}</h2>
+                <span style="display:inline-block; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600; background:{{ fc_bg }}; color:{{ fc_text }};">
+                    {{ scenario.get('status_label', '') }}
+                </span>
+            </div>
+            <div style="text-align:right; font-size:12px; color:#6E6E73;">
+                <div><strong>{{ cr.order_number }}</strong></div>
+                <div>{{ cr.customer }}</div>
+                <div style="margin-top:4px;">
+                    {% if cr.order_type == 'custom' %}
+                        <span class="badge" style="background:#EDE7F6; color:#4527A0;">Custom</span>
+                    {% else %}
+                        <span class="badge" style="background:#E3F2FD; color:#1565C0;">Stock</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {% if scenario.get('warning') %}
+        <div style="margin-top:14px; padding:12px 14px; background:#FFF3CD; border:1.5px solid #FFC107; border-radius:8px; font-size:13px; color:#856404; font-weight:500;">
+            ⚠ {{ scenario.warning }}
+        </div>
+        {% endif %}
+
+        <div style="margin-top:14px; padding:12px 14px; background:#F5F5F7; border-radius:8px; font-size:13px; color:#6E6E73; font-style:italic;">
+            {{ scenario.get('why_it_exists', '') }}
+        </div>
+    </div>
+
+    <!-- What the customer wants -->
+    {% if cr.request_detail %}
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 10px;">Customer Request</h3>
+        <p style="font-size:14px; color:#1D1D1F; margin:0; line-height:1.6;">{{ cr.request_detail }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Unit changes log — grouped by swap timestamp -->
+    {% if unit_changes %}
+    {% set ns = namespace(last_ts='', swap_num=0) %}
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 12px;">Unit Change History</h3>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+        {% for u in unit_changes %}
+            {% if u.created_at != ns.last_ts %}
+                {% if ns.swap_num > 0 %}</div></div>{% endif %}
+                {% set ns.swap_num = ns.swap_num + 1 %}
+                {% set ns.last_ts = u.created_at %}
+                <div>
+                <div style="font-size:11px; font-weight:600; color:#8E8E93; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                    <span style="background:#F5F5F7; border-radius:20px; padding:2px 10px;">Swap {{ ns.swap_num }}</span>
+                    <span>{{ u.created_at }}</span>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            {% endif %}
+            {% if u.action == 'removed' %}
+                <div style="background:#FFF5F5; border:1.5px solid #FFCDD2; border-radius:8px; padding:10px 12px;">
+                    <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#C62828; margin-bottom:6px;">✕ Removed</div>
+                    <div style="font-size:13px; font-weight:600; color:#1D1D1F;">{{ u.design_name }}</div>
+                    <div style="font-size:11px; color:#6E6E73; margin-top:2px;">{{ u.size }} · {{ u.finish }} · {{ u.swing }} · {{ u.glass_type }}</div>
+                    <div style="font-family:monospace; font-size:11px; color:#C62828; margin-top:3px;">{{ u.serial_number or '—' }}</div>
+                </div>
+            {% elif u.action == 'added' %}
+                <div style="background:#F1F8F2; border:1.5px solid #C8E6C9; border-radius:8px; padding:10px 12px;">
+                    <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#2E7D32; margin-bottom:6px;">✓ Added</div>
+                    <div style="font-size:13px; font-weight:600; color:#1D1D1F;">{{ u.design_name }}</div>
+                    <div style="font-size:11px; color:#6E6E73; margin-top:2px;">{{ u.size }} · {{ u.finish }} · {{ u.swing }} · {{ u.glass_type }}</div>
+                    <div style="font-family:monospace; font-size:11px; color:#2E7D32; margin-top:3px;">{{ u.serial_number or '—' }}</div>
+                </div>
+            {% endif %}
+        {% endfor %}
+        {% if ns.swap_num > 0 %}</div></div>{% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Units on this order: actions -->
+    {% set has_changes = unit_changes | length > 0 %}
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 12px;">Units on This Order</h3>
+
+        {% if order_units %}
+
+        <!-- Action tabs -->
+        <div style="display:flex; gap:6px; margin-bottom:14px;">
+            <button type="button" class="det-action-tab active" data-action="swap"   onclick="detSetAction('swap')">🔄 Swap Unit</button>
+            <button type="button" class="det-action-tab"        data-action="remove" onclick="detSetAction('remove')">➖ Remove Unit</button>
+            <button type="button" class="det-action-tab"        data-action="add"    onclick="detSetAction('add')">➕ Add Unit</button>
+        </div>
+        <style>
+        .det-action-tab { flex:1; padding:8px 6px; font-size:12px; font-weight:600; border:1.5px solid #D2D2D7; border-radius:8px; background:#fff; cursor:pointer; color:#6E6E73; transition:all .1s; }
+        .det-action-tab.active { border-color:#0071E3; background:#EFF6FF; color:#0071E3; }
+        .det-action-tab.locked { opacity:.4; cursor:not-allowed; }
+        </style>
+
+        <!-- Unit list -->
+        <div id="detUnitList" style="display:flex; flex-direction:column; gap:8px;">
+            {% for u in order_units %}
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; background:#F5F5F7; border-radius:10px;">
+                <div>
+                    <div style="font-size:13px; font-weight:600; color:#1D1D1F;">{{ u.design_name }} · {{ u.size }} · {{ u.finish }}</div>
+                    <div style="font-size:12px; color:#6E6E73; margin-top:1px;">{{ u.swing }} · {{ u.glass_type }} · <span style="font-family:monospace;">{{ u.serial_number or '—' }}</span></div>
+                </div>
+                <div style="display:flex; gap:6px; flex-shrink:0;">
+                    <button type="button" class="det-btn-swap btn btn-sm btn-secondary"
+                            onclick="openSwap('{{ cr.order_number }}','{{ u.serial_number }}','{{ u.design_name }}','{{ u.size }}','{{ u.finish }}','{{ u.source }}')">
+                        Swap
+                    </button>
+                    <form class="det-btn-remove" method="POST" action="{{ url_for('sales_change_order') }}"
+                          style="display:none;"
+                          onsubmit="return confirm('Remove {{ u.serial_number }} from this order and return it to inventory?')">
+                        <input type="hidden" name="order_number" value="{{ cr.order_number }}">
+                        <input type="hidden" name="old_serial"   value="{{ u.serial_number }}">
+                        <input type="hidden" name="source"       value="{{ u.source }}">
+                        <input type="hidden" name="co_action"    value="remove">
+                        <input type="hidden" name="cr_id"        value="{{ cr.id }}">
+                        <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Add unit panel -->
+        <div id="detAddPanel" style="display:none; margin-top:12px;">
+            <form method="POST" action="{{ url_for('sales_change_order') }}" id="detAddForm">
+                <input type="hidden" name="order_number" value="{{ cr.order_number }}">
+                <input type="hidden" name="customer"     value="{{ cr.customer }}">
+                <input type="hidden" name="co_action"    value="add">
+                <input type="hidden" name="cr_id"        value="{{ cr.id }}">
+                <input type="hidden" name="new_unit_id"  id="detAddUnitId">
+                <div style="display:flex; gap:12px; margin-bottom:8px;">
+                    <div style="display:flex; align-items:center; gap:5px; font-size:11px; color:#1D1D1F;">
+                        <span style="width:10px; height:10px; border-radius:2px; background:#D4EDDA; border:1px solid #28A745; display:inline-block;"></span> In Stock
+                    </div>
+                    <div style="display:flex; align-items:center; gap:5px; font-size:11px; color:#1D1D1F;">
+                        <span style="width:10px; height:10px; border-radius:2px; background:#FFF3CD; border:1px solid #FFC107; display:inline-block;"></span> Pre-Sale
+                    </div>
+                </div>
+                <input type="text" id="detAddSearch" placeholder="Filter by design, size, finish, serial…" oninput="detFilterAdd()"
+                       style="width:100%; box-sizing:border-box; padding:8px 11px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:13px; outline:none; margin-bottom:8px;">
+                <div id="detAddList" style="max-height:260px; overflow-y:auto; border:1.5px solid #D2D2D7; border-radius:8px; background:#FAFAFA;"></div>
+                <div id="detAddSelected" style="margin-top:8px; font-size:12px; color:#0071E3; font-weight:500;"></div>
+                <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+                    <button type="submit" id="detAddSubmit" class="btn btn-primary" disabled>Add Unit to Order</button>
+                </div>
+            </form>
+        </div>
+
+        {% else %}
+        <p style="font-size:13px; color:#8E8E93; margin:0;">Order not found in active sales or warehouse records.</p>
+        {% endif %}
+    </div>
+
+    <!-- Swap modal -->
+    <div id="swapModal" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.5); align-items:center; justify-content:center;">
+        <div style="background:#fff; border-radius:16px; padding:28px 28px 22px; width:700px; max-width:96vw; max-height:88vh; display:flex; flex-direction:column; box-shadow:0 24px 64px rgba(0,0,0,0.22);">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; flex-shrink:0;">
+                <div>
+                    <h2 style="font-size:17px; font-weight:600; color:#1D1D1F; margin:0 0 4px;">Select Replacement Unit</h2>
+                    <p id="swapCurrentLabel" style="font-size:13px; color:#6E6E73; margin:0;">Replacing: —</p>
+                </div>
+                <button onclick="closeSwap()" style="background:none; border:none; cursor:pointer; color:#6E6E73; font-size:24px; line-height:1; padding:0; margin-left:16px;">&times;</button>
+            </div>
+            <input type="text" id="swapSearch" placeholder="Filter by design, size, finish, or serial…" oninput="filterSwapUnits()"
+                   style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none; margin-bottom:10px; flex-shrink:0;">
+            <div style="display:flex; gap:16px; margin-bottom:10px; flex-shrink:0;">
+                <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#1D1D1F;">
+                    <span style="display:inline-block; width:12px; height:12px; border-radius:3px; background:#D4EDDA; border:1px solid #28A745;"></span> In Stock
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#1D1D1F;">
+                    <span style="display:inline-block; width:12px; height:12px; border-radius:3px; background:#FFF3CD; border:1px solid #FFC107;"></span> Pre-Sale — order moves back to Allocated
+                </div>
+            </div>
+            <div id="swapUnitList" style="flex:1; overflow-y:auto; border:1.5px solid #D2D2D7; border-radius:10px; background:#FAFAFA;"></div>
+            <p id="swapNoResults" style="display:none; font-size:13px; color:#6E6E73; text-align:center; padding:20px 0; margin:0;">No units match your search.</p>
+            <div id="swapPresaleWarning" style="display:none; margin-top:12px; padding:12px 14px; background:#FFF3E0; border:1.5px solid #FFB300; border-radius:8px; flex-shrink:0;">
+                <div style="font-size:13px; font-weight:600; color:#E65100; margin-bottom:4px;">⚠ Pre-Sale Unit Selected</div>
+                <div style="font-size:13px; color:#5D4037; line-height:1.5;">This unit hasn't arrived yet. Confirming will <strong>move this order back to Allocated</strong> and remove it from the warehouse queue.</div>
+            </div>
+            <form id="swapForm" method="POST" action="{{ url_for('sales_change_order') }}" style="margin-top:14px; flex-shrink:0;">
+                <input type="hidden" name="order_number" id="swapOrderNumber">
+                <input type="hidden" name="old_serial"   id="swapOldSerial">
+                <input type="hidden" name="new_unit_id"  id="swapNewUnitId">
+                <input type="hidden" name="source"       id="swapSource">
+                <input type="hidden" name="co_action"    value="swap">
+                <input type="hidden" name="cr_id"        value="{{ cr.id }}">
+                <div style="display:flex; gap:10px; justify-content:flex-end; align-items:center;">
+                    <span id="swapSelectedLabel" style="font-size:13px; color:#6E6E73; flex:1;"></span>
+                    <button type="button" onclick="closeSwap()" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" id="swapSubmit" class="btn btn-primary" disabled>Confirm Swap</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- CS Steps -->
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#0071E3; margin:0 0 14px;">
+            Customer Service Steps
+        </h3>
+        <ol style="margin:0; padding-left:20px; display:flex; flex-direction:column; gap:10px;">
+            {% for step in scenario.get('cs_steps', []) %}
+            <li style="font-size:14px; color:#1D1D1F; line-height:1.6;">{{ step }}</li>
+            {% endfor %}
+        </ol>
+    </div>
+
+    <!-- Warehouse Actions -->
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#5856D6; margin:0 0 14px;">
+            Warehouse Actions
+        </h3>
+        <ul style="margin:0; padding-left:20px; display:flex; flex-direction:column; gap:10px;">
+            {% for action in scenario.get('warehouse_actions', []) %}
+            <li style="font-size:14px; color:#1D1D1F; line-height:1.6;">{{ action }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <!-- Owner Verification -->
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#34C759; margin:0 0 14px;">
+            Owner Verification Checklist
+        </h3>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            {% for item in scenario.get('owner_verify', []) %}
+            <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+                <input type="checkbox" style="margin-top:3px; flex-shrink:0;">
+                <span style="font-size:14px; color:#1D1D1F; line-height:1.5;">{{ item }}</span>
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Non-negotiables -->
+    <div class="card" style="border-left:4px solid #FF3B30;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#FF3B30; margin:0 0 12px;">Non-Negotiables</h3>
+        <ul style="margin:0; padding-left:20px; display:flex; flex-direction:column; gap:8px;">
+            {% for rule in non_negotiables %}
+            <li style="font-size:13px; color:#1D1D1F; line-height:1.5;">{{ rule }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+
+</div>
+
+<!-- Right column: status + notes -->
+<div>
+
+    <!-- Status card -->
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 14px;">Status</h3>
+        <form method="POST" action="{{ url_for('change_request_update', cr_id=cr.id) }}">
+            <div style="margin-bottom:12px;">
+                <select name="status" class="form-select" style="width:100%;">
+                    <option value="Open"        {% if cr.status == 'Open' %}selected{% endif %}>Open</option>
+                    <option value="In Progress" {% if cr.status == 'In Progress' %}selected{% endif %}>In Progress</option>
+                    <option value="Resolved"    {% if cr.status == 'Resolved' %}selected{% endif %}>Resolved</option>
+                </select>
+            </div>
+            <div style="margin-bottom:12px;">
+                <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:4px;">Internal Notes</label>
+                <textarea name="notes" rows="3"
+                          style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:13px; outline:none; resize:vertical;">{{ cr.notes or '' }}</textarea>
+            </div>
+            <div style="margin-bottom:12px;">
+                <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:4px;">Resolution Summary</label>
+                <textarea name="resolution" rows="3"
+                          placeholder="How was this resolved?"
+                          style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:13px; outline:none; resize:vertical;">{{ cr.resolution or '' }}</textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%;">Save</button>
+        </form>
+    </div>
+
+    <!-- Metadata -->
+    <div class="card">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 12px;">Details</h3>
+        <div style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#6E6E73;">Created by</span>
+                <span style="font-weight:500;">{{ cr.created_by or '—' }}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#6E6E73;">Created</span>
+                <span>{{ (cr.created_at or '')[:16] }}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#6E6E73;">Last updated</span>
+                <span>{{ (cr.updated_at or '')[:16] }}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span style="color:#6E6E73;">Friction level</span>
+                <span style="font-weight:500; color:{{ fc_text }}; text-transform:capitalize;">{{ scenario.get('friction_level', '—') }}</span>
+            </div>
+        </div>
+    </div>
+
+</div>
+</div>
+
+<script>
+const AVAILABLE_UNITS = {{ available_units | tojson }};
+let swapSelectedId = null;
+const openVariants = new Set();
+
+function variantKey(u) {
+    return `${u.design_name}||${u.size}||${u.finish}||${u.swing}||${u.glass_type}`;
+}
+
+function groupByVariant(units) {
+    const map = new Map();
+    units.forEach(u => {
+        const k = variantKey(u);
+        if (!map.has(k)) map.set(k, { meta: u, inStock: [], preSale: [] });
+        if (u.status === 'In Stock') map.get(k).inStock.push(u);
+        else map.get(k).preSale.push(u);
+    });
+    return map;
+}
+
+function selectUnit(u, rowEl) {
+    document.querySelectorAll('#swapUnitList .serial-row').forEach(r => {
+        r.style.outline = 'none';
+        r.style.fontWeight = '400';
+    });
+    rowEl.style.outline = '2px solid #0071E3';
+    rowEl.style.fontWeight = '600';
+    document.getElementById('swapNewUnitId').value = u.id;
+    swapSelectedId = u.id;
+    const isPresale = u.status !== 'In Stock';
+    document.getElementById('swapPresaleWarning').style.display = isPresale ? 'block' : 'none';
+    document.getElementById('swapSelectedLabel').textContent =
+        `Selected: ${u.design_name} · ${u.size} · ${u.finish} · ${u.serial_number || '—'}`;
+    const btn = document.getElementById('swapSubmit');
+    btn.textContent = isPresale ? 'Move to Allocated' : 'Confirm Swap';
+    btn.className   = isPresale ? 'btn btn-danger' : 'btn btn-primary';
+    btn.disabled    = false;
+}
+
+function renderSwapUnits(units) {
+    const list  = document.getElementById('swapUnitList');
+    const noRes = document.getElementById('swapNoResults');
+    list.innerHTML = '';
+    if (!units.length) { list.style.display = 'none'; noRes.style.display = 'block'; return; }
+    list.style.display = 'block'; noRes.style.display = 'none';
+
+    const grouped = groupByVariant(units);
+    let first = true;
+
+    grouped.forEach((g, key) => {
+        const u = g.meta;
+        const stockCount   = g.inStock.length;
+        const presaleCount = g.preSale.length;
+        const isOpen = openVariants.has(key) || units.length <= 6;
+
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = `border-bottom:1px solid #E8E8ED;${first ? '' : ''}`;
+        first = false;
+
+        // Variant header row (accordion trigger)
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer; background:#F5F5F7; user-select:none;';
+        hdr.innerHTML = `
+            <span id="caret-${key.replace(/\W/g,'_')}" style="font-size:11px; color:#6E6E73; transition:transform .15s; display:inline-block; transform:${isOpen ? 'rotate(90deg)' : 'rotate(0deg)'};">&#9654;</span>
+            <span style="font-size:13px; font-weight:600; color:#1D1D1F; flex:1;">${u.design_name} <span style="font-weight:400; color:#6E6E73;">· ${u.size} · ${u.finish} · ${u.swing} · ${u.glass_type}</span></span>
+            <span style="font-size:11px; font-weight:600; margin-left:auto; display:flex; gap:6px;">
+                ${stockCount   ? `<span style="background:#D4EDDA; color:#155724; padding:2px 8px; border-radius:20px;">${stockCount} in stock</span>` : ''}
+                ${presaleCount ? `<span style="background:#FFF3CD; color:#856404; padding:2px 8px; border-radius:20px;">${presaleCount} pre-sale</span>` : ''}
+            </span>`;
+
+        const body = document.createElement('div');
+        body.style.cssText = `display:${isOpen ? 'block' : 'none'}; background:#fff;`;
+
+        hdr.addEventListener('click', () => {
+            const open = body.style.display !== 'none';
+            body.style.display = open ? 'none' : 'block';
+            const caretEl = hdr.querySelector('span:first-child');
+            caretEl.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+            open ? openVariants.delete(key) : openVariants.add(key);
+        });
+
+        // Serial rows — In Stock first, then Pre-Sale
+        const allSerials = [
+            ...g.inStock.map(u => ({ u, isPresale: false })),
+            ...g.preSale.map(u => ({ u, isPresale: true  })),
+        ];
+
+        allSerials.forEach(({ u, isPresale }, idx) => {
+            const row = document.createElement('div');
+            row.className = 'serial-row';
+            const bg      = isPresale ? '#FFFDF0' : '#F6FFF8';
+            const dot     = isPresale ? '#FFC107' : '#28A745';
+            const label   = isPresale ? `Pre-Sale · ${u.container_id || 'TBD'}` : 'In Stock';
+            const labelClr = isPresale ? '#856404' : '#155724';
+            row.style.cssText = `display:flex; align-items:center; gap:12px; padding:9px 14px 9px 36px; cursor:pointer; background:${bg}; border-top:1px solid #F0F0F5; transition:filter .1s;`;
+            row.dataset.unitId = u.id;
+            row.innerHTML = `
+                <span style="width:10px; height:10px; border-radius:50%; background:${dot}; flex-shrink:0;"></span>
+                <span style="font-family:monospace; font-size:13px; color:#1D1D1F; flex:1;">${u.serial_number || '—'}</span>
+                <span style="font-size:12px; font-weight:500; color:${labelClr};">${label}</span>`;
+            row.addEventListener('mouseenter', () => { if (swapSelectedId !== u.id) row.style.filter = 'brightness(0.96)'; });
+            row.addEventListener('mouseleave', () => { row.style.filter = ''; });
+            row.addEventListener('click', () => selectUnit(u, row));
+            body.appendChild(row);
+        });
+
+        wrapper.appendChild(hdr);
+        wrapper.appendChild(body);
+        list.appendChild(wrapper);
+    });
+}
+
+function openSwap(orderNum, serial, design, size, finish, source) {
+    document.getElementById('swapCurrentLabel').textContent = `Replacing: ${design} · ${size} · ${finish} · ${serial}`;
+    document.getElementById('swapOrderNumber').value = orderNum;
+    document.getElementById('swapOldSerial').value   = serial;
+    document.getElementById('swapSource').value      = source;
+    document.getElementById('swapNewUnitId').value   = '';
+    document.getElementById('swapSubmit').disabled   = true;
+    document.getElementById('swapSubmit').textContent = 'Confirm Swap';
+    document.getElementById('swapSubmit').className  = 'btn btn-primary';
+    document.getElementById('swapSearch').value      = '';
+    document.getElementById('swapSelectedLabel').textContent = '';
+    document.getElementById('swapPresaleWarning').style.display = 'none';
+    swapSelectedId = null;
+    openVariants.clear();
+    renderSwapUnits(AVAILABLE_UNITS);
+    document.getElementById('swapModal').style.display = 'flex';
+    setTimeout(() => document.getElementById('swapSearch').focus(), 50);
+}
+
+function closeSwap() {
+    document.getElementById('swapModal').style.display = 'none';
+}
+
+function filterSwapUnits() {
+    const q = document.getElementById('swapSearch').value.toLowerCase();
+    const filtered = q ? AVAILABLE_UNITS.filter(u =>
+        u.design_name.toLowerCase().includes(q) ||
+        u.size.toLowerCase().includes(q) ||
+        u.finish.toLowerCase().includes(q) ||
+        u.swing.toLowerCase().includes(q) ||
+        u.glass_type.toLowerCase().includes(q) ||
+        (u.serial_number || '').toLowerCase().includes(q) ||
+        (u.container_id  || '').toLowerCase().includes(q)
+    ) : AVAILABLE_UNITS;
+    if (q) filtered.forEach(u => openVariants.add(variantKey(u)));
+    renderSwapUnits(filtered);
+}
+
+document.getElementById('swapModal').addEventListener('click', function(e) {
+    if (e.target === this) closeSwap();
+});
+
+// ── Detail page action tabs ──
+let detCurrentAction = 'swap';
+const detAddOpenVars = new Set();
+let detAddSelectedId = null;
+
+function detSetAction(action) {
+    detCurrentAction = action;
+    document.querySelectorAll('.det-action-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.action === action);
+    });
+    const swapBtns   = document.querySelectorAll('.det-btn-swap');
+    const removeForms = document.querySelectorAll('.det-btn-remove');
+    const addPanel   = document.getElementById('detAddPanel');
+    const unitList   = document.getElementById('detUnitList');
+
+    swapBtns.forEach(b => b.style.display   = action === 'swap'   ? '' : 'none');
+    removeForms.forEach(f => f.style.display = action === 'remove' ? '' : 'none');
+
+    if (action === 'add') {
+        unitList.style.display  = 'none';
+        addPanel.style.display  = '';
+        detAddOpenVars.clear();
+        detRenderAdd(AVAILABLE_UNITS);
+        setTimeout(() => document.getElementById('detAddSearch').focus(), 50);
+    } else {
+        unitList.style.display  = '';
+        addPanel.style.display  = 'none';
+    }
+}
+
+function detVariantKey(u) {
+    return `${u.design_name}||${u.size}||${u.finish}||${u.swing}||${u.glass_type}`;
+}
+
+function detSelectAdd(u, rowEl) {
+    document.querySelectorAll('#detAddList .det-serial-row').forEach(r => {
+        r.style.outline = 'none'; r.style.fontWeight = '400';
+    });
+    rowEl.style.outline = '2px solid #0071E3';
+    rowEl.style.fontWeight = '600';
+    document.getElementById('detAddUnitId').value = u.id;
+    detAddSelectedId = u.id;
+    document.getElementById('detAddSelected').textContent =
+        `Selected: ${u.design_name} · ${u.size} · ${u.serial_number || '—'}`;
+    document.getElementById('detAddSubmit').disabled = false;
+}
+
+function detRenderAdd(units) {
+    const list  = document.getElementById('detAddList');
+    list.innerHTML = '';
+    if (!units.length) { list.innerHTML = '<div style="padding:14px;text-align:center;font-size:13px;color:#6E6E73;">No units match.</div>'; return; }
+
+    const map = new Map();
+    units.forEach(u => {
+        const k = detVariantKey(u);
+        if (!map.has(k)) map.set(k, { meta: u, inStock: [], preSale: [] });
+        if (u.status === 'In Stock') map.get(k).inStock.push(u);
+        else map.get(k).preSale.push(u);
+    });
+
+    map.forEach((g, key) => {
+        const u = g.meta;
+        const isOpen = detAddOpenVars.has(key) || units.length <= 6;
+        const wrapper = document.createElement('div');
+        wrapper.style.borderBottom = '1px solid #E8E8ED';
+
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;background:#F5F5F7;user-select:none;';
+        hdr.innerHTML = `
+            <span class="det-caret" style="font-size:10px;color:#6E6E73;display:inline-block;transform:${isOpen ? 'rotate(90deg)' : 'rotate(0deg)'};transition:transform .15s;">&#9654;</span>
+            <span style="font-size:12px;font-weight:600;color:#1D1D1F;flex:1;">${u.design_name} <span style="font-weight:400;color:#6E6E73;">· ${u.size} · ${u.finish} · ${u.swing} · ${u.glass_type}</span></span>
+            <span style="font-size:11px;display:flex;gap:5px;">
+                ${g.inStock.length  ? `<span style="background:#D4EDDA;color:#155724;padding:1px 7px;border-radius:20px;">${g.inStock.length} in stock</span>` : ''}
+                ${g.preSale.length  ? `<span style="background:#FFF3CD;color:#856404;padding:1px 7px;border-radius:20px;">${g.preSale.length} pre-sale</span>` : ''}
+            </span>`;
+
+        const body = document.createElement('div');
+        body.style.display = isOpen ? '' : 'none';
+
+        hdr.addEventListener('click', () => {
+            const open = body.style.display !== 'none';
+            body.style.display = open ? 'none' : '';
+            hdr.querySelector('.det-caret').style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+            open ? detAddOpenVars.delete(key) : detAddOpenVars.add(key);
+        });
+
+        [...g.inStock.map(u => ({ u, isPresale: false })),
+         ...g.preSale.map(u => ({ u, isPresale: true  }))
+        ].forEach(({ u, isPresale }) => {
+            const row = document.createElement('div');
+            row.className = 'det-serial-row';
+            const bg  = isPresale ? '#FFFDF0' : '#F6FFF8';
+            const dot = isPresale ? '#FFC107' : '#28A745';
+            const lbl = isPresale ? `Pre-Sale · ${u.container_id || 'TBD'}` : 'In Stock';
+            const lc  = isPresale ? '#856404' : '#155724';
+            row.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 12px 8px 32px;cursor:pointer;background:${bg};border-top:1px solid #F0F0F5;`;
+            row.innerHTML = `
+                <span style="width:8px;height:8px;border-radius:50%;background:${dot};flex-shrink:0;"></span>
+                <span style="font-family:monospace;font-size:12px;color:#1D1D1F;flex:1;">${u.serial_number || '—'}</span>
+                <span style="font-size:11px;font-weight:500;color:${lc};">${lbl}</span>`;
+            row.addEventListener('click', () => detSelectAdd(u, row));
+            body.appendChild(row);
+        });
+
+        wrapper.appendChild(hdr);
+        wrapper.appendChild(body);
+        list.appendChild(wrapper);
+    });
+}
+
+function detFilterAdd() {
+    const q = document.getElementById('detAddSearch').value.toLowerCase();
+    const filtered = q ? AVAILABLE_UNITS.filter(u =>
+        u.design_name.toLowerCase().includes(q) ||
+        u.size.toLowerCase().includes(q) ||
+        u.finish.toLowerCase().includes(q) ||
+        u.swing.toLowerCase().includes(q) ||
+        u.glass_type.toLowerCase().includes(q) ||
+        (u.serial_number || '').toLowerCase().includes(q)
+    ) : AVAILABLE_UNITS;
+    if (q) filtered.forEach(u => detAddOpenVars.add(detVariantKey(u)));
+    detRenderAdd(filtered);
+}
+
+// Init: hide remove forms, show swap buttons
+document.querySelectorAll('.det-btn-remove').forEach(f => f.style.display = 'none');
+</script>
+{% endblock %}

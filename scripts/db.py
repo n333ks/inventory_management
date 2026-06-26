@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS sales_orders (
     container_id     TEXT,
     date_allocated   TEXT DEFAULT (date('now')),
     status           TEXT DEFAULT 'Allocated',
-    fulfillment_type TEXT DEFAULT 'pickup'
+    fulfillment_type TEXT DEFAULT 'pickup',
+    awaiting_presale INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS warehouse (
@@ -113,19 +114,61 @@ CREATE TABLE IF NOT EXISTS activity_log (
     created_at    TEXT
 );
 
+CREATE TABLE IF NOT EXISTS change_request_units (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    cr_id         INTEGER NOT NULL REFERENCES change_requests(id),
+    action        TEXT NOT NULL,
+    serial_number TEXT,
+    design_name   TEXT,
+    size          TEXT,
+    finish        TEXT,
+    swing         TEXT,
+    glass_type    TEXT,
+    sku           TEXT
+);
+
 CREATE TABLE IF NOT EXISTS change_requests (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_number   TEXT NOT NULL,
-    customer       TEXT NOT NULL,
-    order_type     TEXT NOT NULL,
-    scenario_id    TEXT NOT NULL,
-    request_detail TEXT,
-    notes          TEXT,
-    status         TEXT DEFAULT 'Open',
-    resolution     TEXT,
-    created_by     TEXT,
-    created_at     TEXT,
-    updated_at     TEXT
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_number     TEXT NOT NULL,
+    customer         TEXT NOT NULL,
+    order_type       TEXT NOT NULL,
+    scenario_id      TEXT NOT NULL,
+    request_detail   TEXT,
+    notes            TEXT,
+    status           TEXT DEFAULT 'Open',
+    resolution       TEXT,
+    created_by       TEXT,
+    created_at       TEXT,
+    updated_at       TEXT,
+    warehouse_ack    INTEGER DEFAULT 0,
+    warehouse_ack_by TEXT,
+    warehouse_ack_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS order_details (
+    order_number  TEXT PRIMARY KEY,
+    phone         TEXT,
+    email         TEXT,
+    address       TEXT,
+    city          TEXT,
+    state         TEXT,
+    zip           TEXT,
+    notes         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS order_photos (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_number  TEXT NOT NULL,
+    filename      TEXT NOT NULL,
+    caption       TEXT,
+    uploaded_by   TEXT,
+    uploaded_at   TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS containers (
+    container_id  TEXT PRIMARY KEY,
+    eta           TEXT,
+    notes         TEXT
 );
 """
 
@@ -147,6 +190,20 @@ def init_db():
         "ALTER TABLE activity_log ADD COLUMN warehouse_id INTEGER",
         "ALTER TABLE warehouse ADD COLUMN fulfillment_type TEXT DEFAULT 'pickup'",
         "ALTER TABLE sales_orders ADD COLUMN fulfillment_type TEXT DEFAULT 'pickup'",
+        "ALTER TABLE sales_orders ADD COLUMN awaiting_presale INTEGER DEFAULT 0",
+        "ALTER TABLE change_requests ADD COLUMN warehouse_ack INTEGER DEFAULT 0",
+        "ALTER TABLE change_requests ADD COLUMN warehouse_ack_by TEXT",
+        "ALTER TABLE change_requests ADD COLUMN warehouse_ack_at TEXT",
+        "ALTER TABLE change_request_units ADD COLUMN created_at TEXT",
+        """CREATE TABLE IF NOT EXISTS order_details (
+            order_number TEXT PRIMARY KEY, phone TEXT, email TEXT,
+            address TEXT, city TEXT, state TEXT, zip TEXT, notes TEXT)""",
+        """CREATE TABLE IF NOT EXISTS order_photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT NOT NULL,
+            filename TEXT NOT NULL, caption TEXT, uploaded_by TEXT,
+            uploaded_at TEXT DEFAULT (datetime('now')))""",
+        """CREATE TABLE IF NOT EXISTS containers (
+            container_id TEXT PRIMARY KEY, eta TEXT, notes TEXT)""",
     ]:
         try:
             conn.execute(sql)
@@ -464,7 +521,7 @@ def _restore_status(conn, serial, container_id):
     row = conn.execute("SELECT date_received FROM units WHERE serial_number=?", (serial,)).fetchone()
     if row and row["date_received"]:
         return "In Stock"  # container already arrived
-    return f"Pre-Sale ({container_id})" if container_id else "In Stock"
+    return f"Pre-Sale - {container_id}" if container_id else "In Stock"
 
 
 def cancel_order(conn, order_number):
@@ -516,13 +573,30 @@ def change_order_unit(conn, order_number, old_serial, new_unit_id, source="sales
     if source == "warehouse":
         # Container has physically arrived (unit is in warehouse), so always In Stock
         restore = "In Stock"
+        # Warehouse units may not have a row in units table — upsert
+        existing = conn.execute(
+            "SELECT id FROM units WHERE serial_number=?", (old_serial,)
+        ).fetchone()
+        if existing:
+            conn.execute("UPDATE units SET status=? WHERE serial_number=?", (restore, old_serial))
+        else:
+            # Re-insert from warehouse row info
+            wh_row = conn.execute(
+                "SELECT variant_id, container_id FROM warehouse WHERE serial_number=? AND order_number=?",
+                (old_serial, order_number),
+            ).fetchone()
+            if wh_row:
+                conn.execute(
+                    "INSERT INTO units (variant_id, serial_number, status, container_id) VALUES (?, ?, ?, ?)",
+                    (wh_row["variant_id"], old_serial, restore, wh_row["container_id"]),
+                )
     else:
         old_unit = conn.execute(
             "SELECT container_id FROM units WHERE serial_number=?", (old_serial,)
         ).fetchone()
         old_container = old_unit["container_id"] if old_unit else None
         restore = _restore_status(conn, old_serial, old_container)
-    conn.execute("UPDATE units SET status=? WHERE serial_number=?", (restore, old_serial))
+        conn.execute("UPDATE units SET status=? WHERE serial_number=?", (restore, old_serial))
 
     # Claim new unit
     conn.execute(
@@ -532,26 +606,89 @@ def change_order_unit(conn, order_number, old_serial, new_unit_id, source="sales
 
     if source == "warehouse":
         wh = conn.execute(
-            "SELECT id FROM warehouse WHERE order_number=? AND serial_number=?",
+            "SELECT id, customer, fulfillment_type FROM warehouse WHERE order_number=? AND serial_number=?",
             (order_number, old_serial),
         ).fetchone()
         if not wh:
             raise ValueError(f"No warehouse row for {order_number} / {old_serial}")
-        conn.execute("""
-            UPDATE warehouse SET variant_id=?, serial_number=?, container_id=?
-            WHERE id=?
-        """, (new_unit["variant_id"], new_unit["serial_number"], new_unit["container_id"], wh["id"]))
+
+        if new_unit["status"].startswith("Pre-Sale"):
+            # Move this warehouse unit back to sales_orders (awaiting arrival)
+            conn.execute("""
+                INSERT INTO sales_orders
+                    (order_number, customer, variant_id, serial_number, container_id,
+                     date_allocated, status, fulfillment_type, awaiting_presale)
+                VALUES (?, ?, ?, ?, ?, date('now'), 'Allocated', ?, 1)
+            """, (order_number, wh["customer"], new_unit["variant_id"],
+                  new_unit["serial_number"], new_unit["container_id"],
+                  wh["fulfillment_type"]))
+            # Remove checklist/photos for the departing warehouse row
+            conn.execute("DELETE FROM warehouse_checklist WHERE warehouse_id=?", (wh["id"],))
+            conn.execute("DELETE FROM warehouse_photos WHERE warehouse_id=?", (wh["id"],))
+            conn.execute("DELETE FROM warehouse WHERE id=?", (wh["id"],))
+        else:
+            conn.execute("""
+                UPDATE warehouse SET variant_id=?, serial_number=?, container_id=?
+                WHERE id=?
+            """, (new_unit["variant_id"], new_unit["serial_number"], new_unit["container_id"], wh["id"]))
     else:
         so = conn.execute(
-            "SELECT id FROM sales_orders WHERE order_number=? AND serial_number=?",
+            "SELECT * FROM sales_orders WHERE order_number=? AND serial_number=?",
             (order_number, old_serial),
         ).fetchone()
         if not so:
             raise ValueError(f"No sales order row for {order_number} / {old_serial}")
-        conn.execute("""
-            UPDATE sales_orders SET variant_id=?, serial_number=?, container_id=?
-            WHERE id=?
-        """, (new_unit["variant_id"], new_unit["serial_number"], new_unit["container_id"], so["id"]))
+        new_is_presale = new_unit["status"].startswith("Pre-Sale")
+        if new_is_presale:
+            # Stay in sales_orders, flag as awaiting pre-sale arrival
+            conn.execute("""
+                UPDATE sales_orders SET variant_id=?, serial_number=?, container_id=?,
+                    awaiting_presale=1
+                WHERE id=?
+            """, (new_unit["variant_id"], new_unit["serial_number"],
+                  new_unit["container_id"], so["id"]))
+        else:
+            # New unit is In Stock — update this row first
+            conn.execute("""
+                UPDATE sales_orders SET variant_id=?, serial_number=?, container_id=?,
+                    awaiting_presale=0
+                WHERE id=?
+            """, (new_unit["variant_id"], new_unit["serial_number"],
+                  new_unit["container_id"], so["id"]))
+            # Only move to warehouse if every unit's container has physically arrived
+            # (i.e. each container_id has at least one In Stock unit)
+            unready = conn.execute("""
+                SELECT COUNT(*) FROM sales_orders so
+                WHERE so.order_number=?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM units u
+                      WHERE u.container_id = so.container_id
+                        AND u.status = 'In Stock'
+                  )
+            """, (order_number,)).fetchone()[0]
+            if unready == 0:
+                from datetime import date
+                today = date.today().isoformat()
+                all_rows = conn.execute(
+                    "SELECT * FROM sales_orders WHERE order_number=?", (order_number,)
+                ).fetchall()
+                for row in all_rows:
+                    ft = row["fulfillment_type"] or "pickup"
+                    conn.execute("""
+                        INSERT INTO warehouse
+                            (order_number, customer, variant_id, serial_number, container_id,
+                             date_arrived, status, fulfillment_type)
+                        VALUES (?, ?, ?, ?, ?, ?, 'In Prep', ?)
+                    """, (order_number, row["customer"], row["variant_id"],
+                          row["serial_number"], row["container_id"], today, ft))
+                conn.execute("DELETE FROM sales_orders WHERE order_number=?", (order_number,))
+                # Auto-acknowledge any open COs — warehouse is seeing this order fresh
+                from datetime import datetime as _dt
+                conn.execute("""
+                    UPDATE change_requests SET warehouse_ack=1, warehouse_ack_by='system',
+                        warehouse_ack_at=?
+                    WHERE order_number=? AND (warehouse_ack IS NULL OR warehouse_ack=0)
+                """, (_dt.now().strftime("%Y-%m-%d %H:%M:%S"), order_number))
 
     conn.commit()
 
@@ -609,16 +746,24 @@ def get_sales_grouped(conn):
     """).fetchall()
     units = conn.execute("""
         SELECT id, order_number, serial_number, container_id, status,
-               design_name, size, finish, swing, glass_type, sku, source, fulfillment_type
+               design_name, size, finish, swing, glass_type, sku, source, fulfillment_type, arrived
         FROM (
             SELECT so.id, so.order_number, so.serial_number, so.container_id, so.status,
                    v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku,
-                   'sales' AS source, so.fulfillment_type
+                   'sales' AS source, so.fulfillment_type,
+                   CASE
+                       WHEN so.container_id IS NULL THEN 1
+                       WHEN EXISTS (
+                           SELECT 1 FROM units u2
+                           WHERE u2.container_id = so.container_id AND u2.status = 'In Stock'
+                       ) THEN 1
+                       ELSE 0
+                   END AS arrived
             FROM sales_orders so JOIN variants v ON v.id = so.variant_id
             UNION ALL
             SELECT wh.id, wh.order_number, wh.serial_number, wh.container_id, wh.status,
                    v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku,
-                   'warehouse' AS source, wh.fulfillment_type
+                   'warehouse' AS source, wh.fulfillment_type, 1 AS arrived
             FROM warehouse wh JOIN variants v ON v.id = wh.variant_id
         )
         ORDER BY order_number, id
@@ -635,8 +780,9 @@ def get_available_units(conn):
         JOIN variants v ON v.id = u.variant_id
         WHERE u.status = 'In Stock' OR u.status LIKE 'Pre-Sale%'
         ORDER BY
+            v.design_name, v.size, v.finish, v.swing, v.glass_type,
             CASE WHEN u.status = 'In Stock' THEN 0 ELSE 1 END,
-            v.design_name, v.size, v.finish
+            u.serial_number
     """).fetchall()
 
 
@@ -721,6 +867,11 @@ def get_all_units(conn):
         JOIN variants v ON v.id = u.variant_id
         WHERE u.status NOT LIKE 'Allocated%'
         ORDER BY v.design_name, v.size, v.finish, v.swing, v.glass_type,
+                 CASE u.status
+                     WHEN 'In Stock'      THEN 0
+                     WHEN 'In Production' THEN 1
+                     ELSE 2
+                 END,
                  CASE WHEN u.serial_number IS NULL THEN 1 ELSE 0 END,
                  u.serial_number
     """).fetchall()
@@ -730,6 +881,134 @@ def delete_production_units(conn):
     """Remove all In Production units (for cleanup/reset)."""
     conn.execute("DELETE FROM units WHERE status='In Production'")
     conn.commit()
+
+
+def remove_unit_from_order(conn, order_number, serial, source):
+    """Remove a single unit from an order and restore it to inventory."""
+    if source == 'warehouse':
+        wh = conn.execute(
+            "SELECT id FROM warehouse WHERE order_number=? AND serial_number=?",
+            (order_number, serial)
+        ).fetchone()
+        if wh:
+            conn.execute("DELETE FROM warehouse_checklist WHERE warehouse_id=?", (wh['id'],))
+            conn.execute("DELETE FROM warehouse_photos WHERE warehouse_id=?", (wh['id'],))
+            conn.execute("DELETE FROM warehouse WHERE id=?", (wh['id'],))
+        conn.execute("UPDATE units SET status='In Stock' WHERE serial_number=?", (serial,))
+    else:
+        so = conn.execute(
+            "SELECT container_id FROM sales_orders WHERE order_number=? AND serial_number=?",
+            (order_number, serial)
+        ).fetchone()
+        container = so['container_id'] if so else None
+        restore = _restore_status(conn, serial, container)
+        conn.execute("UPDATE units SET status=? WHERE serial_number=?", (restore, serial))
+        conn.execute(
+            "DELETE FROM sales_orders WHERE order_number=? AND serial_number=?",
+            (order_number, serial)
+        )
+    conn.commit()
+
+
+def add_unit_to_order(conn, order_number, customer, new_unit_id, source):
+    """Add a new unit to an existing order. Returns a dict of the added unit with variant info."""
+    unit = conn.execute("""
+        SELECT u.id, u.variant_id, u.serial_number, u.status, u.container_id,
+               v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku
+        FROM units u JOIN variants v ON v.id = u.variant_id
+        WHERE u.id=?
+    """, (new_unit_id,)).fetchone()
+    if not unit:
+        raise ValueError(f"Unit {new_unit_id} not found")
+
+    is_presale = unit['status'].startswith('Pre-Sale')
+    conn.execute(
+        "UPDATE units SET status=? WHERE id=?",
+        (f"Allocated ({order_number})", unit['id'])
+    )
+
+    if source == 'warehouse' and not is_presale:
+        wh_row = conn.execute(
+            "SELECT fulfillment_type FROM warehouse WHERE order_number=? LIMIT 1", (order_number,)
+        ).fetchone()
+        ft = wh_row['fulfillment_type'] if wh_row else 'pickup'
+        conn.execute("""
+            INSERT INTO warehouse
+                (order_number, customer, variant_id, serial_number, container_id,
+                 date_arrived, status, fulfillment_type)
+            VALUES (?, ?, ?, ?, ?, date('now'), 'In Prep', ?)
+        """, (order_number, customer, unit['variant_id'], unit['serial_number'],
+              unit['container_id'], ft))
+    else:
+        ft_row = conn.execute(
+            "SELECT fulfillment_type FROM sales_orders WHERE order_number=? LIMIT 1", (order_number,)
+        ).fetchone()
+        if not ft_row:
+            ft_row = conn.execute(
+                "SELECT fulfillment_type FROM warehouse WHERE order_number=? LIMIT 1", (order_number,)
+            ).fetchone()
+        ft = ft_row['fulfillment_type'] if ft_row else 'pickup'
+        awaiting = 1 if is_presale else 0
+        conn.execute("""
+            INSERT INTO sales_orders
+                (order_number, customer, variant_id, serial_number, container_id,
+                 date_allocated, status, fulfillment_type, awaiting_presale)
+            VALUES (?, ?, ?, ?, ?, date('now'), 'Allocated', ?, ?)
+        """, (order_number, customer, unit['variant_id'], unit['serial_number'],
+              unit['container_id'], ft, awaiting))
+
+    conn.commit()
+    return dict(unit)
+
+
+def log_cr_unit_change(conn, cr_id, action, unit_info, swap_ts=None):
+    """Log a unit added/removed event on a change request."""
+    from datetime import datetime
+    ts = swap_ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("""
+        INSERT INTO change_request_units
+            (cr_id, action, serial_number, design_name, size, finish, swing, glass_type, sku, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (cr_id, action,
+          unit_info.get('serial_number'), unit_info.get('design_name'),
+          unit_info.get('size'), unit_info.get('finish'), unit_info.get('swing'),
+          unit_info.get('glass_type'), unit_info.get('sku'), ts))
+    conn.commit()
+
+
+def get_cr_unit_changes(conn, cr_ids):
+    """Return a dict {cr_id: [change_rows]} for the given list of CR IDs."""
+    if not cr_ids:
+        return {}
+    placeholders = ','.join('?' * len(cr_ids))
+    rows = conn.execute(
+        f"SELECT * FROM change_request_units WHERE cr_id IN ({placeholders}) ORDER BY id",
+        cr_ids
+    ).fetchall()
+    result = {cid: [] for cid in cr_ids}
+    for r in rows:
+        result[r['cr_id']].append(r)
+    return result
+
+
+def get_presale_pending_orders(conn):
+    """Return sales_order rows where a CO swap demoted the order back from warehouse to pre-sale.
+    Only shown when there is an open (unresolved, unacknowledged) change request for the order."""
+    return conn.execute("""
+        SELECT so.order_number, so.customer, so.serial_number, so.container_id,
+               so.fulfillment_type,
+               v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku
+        FROM sales_orders so
+        JOIN variants v ON v.id = so.variant_id
+        WHERE so.awaiting_presale = 1
+          AND EXISTS (
+              SELECT 1 FROM change_requests cr
+              WHERE cr.order_number = so.order_number
+                AND cr.status != 'Resolved'
+                AND (cr.warehouse_ack IS NULL OR cr.warehouse_ack = 0)
+          )
+        ORDER BY so.order_number, so.id
+    """).fetchall()
 
 
 # ── Change requests ────────────────────────────────────────────────────────────
@@ -763,17 +1042,53 @@ def get_change_request(conn, cr_id):
 
 
 def get_warehouse_change_requests(conn):
-    """Return open/in-progress change requests for orders currently in the warehouse."""
+    """Return unresolved, unacknowledged change requests for orders currently in the warehouse."""
     return conn.execute("""
         SELECT cr.id, cr.order_number, cr.customer, cr.scenario_id, cr.request_detail,
                cr.status, cr.created_at,
                MAX(wh.status) AS warehouse_status
         FROM change_requests cr
         JOIN warehouse wh ON wh.order_number = cr.order_number
-        WHERE cr.status != 'Resolved'
+        WHERE cr.status != 'Resolved' AND (cr.warehouse_ack IS NULL OR cr.warehouse_ack = 0)
         GROUP BY cr.id
         ORDER BY cr.id DESC
     """).fetchall()
+
+
+def ack_warehouse_change_request(conn, cr_id, username):
+    from datetime import datetime
+    conn.execute(
+        "UPDATE change_requests SET warehouse_ack=1, warehouse_ack_by=?, warehouse_ack_at=? WHERE id=?",
+        (username, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cr_id),
+    )
+    conn.commit()
+
+
+def get_units_on_order(conn, order_number):
+    """Return units currently on an order from sales_orders or warehouse, joined with variant info."""
+    rows = conn.execute("""
+        SELECT so.serial_number, so.container_id, 'sales' AS source,
+               v.id AS variant_id, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku,
+               CASE
+                   WHEN so.awaiting_presale=1 THEN 'Awaiting Pre-Sale'
+                   WHEN (SELECT COUNT(*) FROM units u2
+                         WHERE u2.container_id = so.container_id
+                           AND u2.status = 'In Stock') > 0
+                        THEN 'Allocated · In Stock'
+                   WHEN so.container_id IS NOT NULL THEN 'Allocated · Pre-Sale'
+                   ELSE so.status
+               END AS status
+        FROM sales_orders so JOIN variants v ON v.id = so.variant_id
+        WHERE so.order_number = ?
+        UNION ALL
+        SELECT wh.serial_number, wh.container_id, 'warehouse' AS source,
+               v.id AS variant_id, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku,
+               wh.status AS status
+        FROM warehouse wh JOIN variants v ON v.id = wh.variant_id
+        WHERE wh.order_number = ?
+        ORDER BY serial_number
+    """, (order_number, order_number)).fetchall()
+    return rows
 
 
 def update_change_request(conn, cr_id, status, resolution, notes):
@@ -785,3 +1100,336 @@ def update_change_request(conn, cr_id, status, resolution, notes):
         (status, resolution, notes, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cr_id),
     )
     conn.commit()
+
+
+# ── Sales Pipeline ─────────────────────────────────────────────────────────────
+
+def get_pipeline_orders(conn):
+    """Return a list of dicts, one per order, with pipeline_stage assigned."""
+    sales_rows = conn.execute("""
+        SELECT so.order_number,
+               MAX(so.customer) AS customer,
+               MAX(so.fulfillment_type) AS fulfillment_type,
+               COUNT(*) AS unit_count,
+               GROUP_CONCAT(DISTINCT v.design_name) AS designs,
+               MIN(so.date_allocated) AS date_allocated,
+               GROUP_CONCAT(DISTINCT so.container_id) AS container_ids
+        FROM sales_orders so
+        JOIN variants v ON v.id = so.variant_id
+        GROUP BY so.order_number
+    """).fetchall()
+
+    orders = []
+    for row in sales_rows:
+        # Pre-sale if any unit has a container that hasn't arrived yet
+        presale = conn.execute("""
+            SELECT 1 FROM sales_orders so
+            WHERE so.order_number=?
+              AND so.container_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM units u WHERE u.container_id=so.container_id AND u.status='In Stock'
+              )
+            LIMIT 1
+        """, (row['order_number'],)).fetchone()
+        stage = 'presale' if presale else 'allocated'
+        orders.append({
+            'order_number': row['order_number'],
+            'customer': row['customer'],
+            'fulfillment_type': row['fulfillment_type'],
+            'unit_count': row['unit_count'],
+            'designs': row['designs'],
+            'date_allocated': row['date_allocated'],
+            'pipeline_stage': stage,
+        })
+
+    wh_rows = conn.execute("""
+        SELECT wh.order_number,
+               MAX(wh.customer) AS customer,
+               MAX(wh.fulfillment_type) AS fulfillment_type,
+               COUNT(*) AS unit_count,
+               GROUP_CONCAT(DISTINCT v.design_name) AS designs,
+               MIN(wh.date_arrived) AS date_allocated,
+               GROUP_CONCAT(wh.status) AS all_statuses
+        FROM warehouse wh
+        JOIN variants v ON v.id = wh.variant_id
+        GROUP BY wh.order_number
+    """).fetchall()
+
+    # Checklist progress per warehouse order
+    checklist_progress = {}
+    cl_rows = conn.execute("""
+        SELECT wh.order_number,
+               COUNT(cl.id)                                    AS total,
+               SUM(CASE WHEN cl.completed=1 THEN 1 ELSE 0 END) AS done
+        FROM warehouse wh
+        LEFT JOIN warehouse_checklist cl ON cl.warehouse_id = wh.id
+        GROUP BY wh.order_number
+    """).fetchall()
+    for r in cl_rows:
+        unit_count_row = next((w for w in wh_rows if w['order_number'] == r['order_number']), None)
+        units = unit_count_row['unit_count'] if unit_count_row else 1
+        # total possible = units × 14 items; cl rows only exist when checklist initialised
+        checklist_progress[r['order_number']] = {
+            'done': r['done'] or 0,
+            'total': units * 14,
+        }
+
+    for row in wh_rows:
+        statuses = [s.strip() for s in (row['all_statuses'] or '').split(',')]
+        if all(s in ('Ready for Pickup', 'Ready for Delivery') for s in statuses):
+            ft = (row['fulfillment_type'] or '').lower()
+            stage = 'ready_delivery' if ft == 'delivery' else 'ready_pickup'
+        elif all(s == 'Pending Review' for s in statuses):
+            stage = 'pending_review'
+        else:
+            stage = 'in_prep'
+        cl = checklist_progress.get(row['order_number'], {'done': 0, 'total': row['unit_count'] * 14})
+        orders.append({
+            'order_number': row['order_number'],
+            'customer': row['customer'],
+            'fulfillment_type': row['fulfillment_type'],
+            'unit_count': row['unit_count'],
+            'designs': row['designs'],
+            'date_allocated': row['date_allocated'],
+            'pipeline_stage': stage,
+            'checklist_done': cl['done'],
+            'checklist_total': cl['total'],
+        })
+
+    return orders
+
+
+def get_pipeline_order_detail(conn, order_number):
+    """Return full detail for a pipeline order card."""
+    order_info = conn.execute(
+        "SELECT * FROM order_details WHERE order_number=?", (order_number,)
+    ).fetchone()
+
+    # Units — include warehouse.id and notes so we can fetch checklists and photos
+    unit_rows = conn.execute("""
+        SELECT serial_number, design_name, size, finish, swing, glass_type, sku,
+               container_id, status, source, arrived, warehouse_id, date_label, notes
+        FROM (
+            SELECT so.serial_number, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku,
+                   so.container_id, so.status, 'sales' AS source,
+                   CASE
+                       WHEN so.container_id IS NULL THEN 1
+                       WHEN EXISTS (SELECT 1 FROM units u2 WHERE u2.container_id=so.container_id AND u2.status='In Stock') THEN 1
+                       ELSE 0
+                   END AS arrived,
+                   NULL AS warehouse_id,
+                   so.date_allocated AS date_label,
+                   NULL AS notes
+            FROM sales_orders so JOIN variants v ON v.id = so.variant_id
+            WHERE so.order_number = ?
+            UNION ALL
+            SELECT wh.serial_number, v.design_name, v.size, v.finish, v.swing, v.glass_type, v.sku,
+                   wh.container_id, wh.status, 'warehouse' AS source, 1 AS arrived,
+                   wh.id AS warehouse_id,
+                   wh.date_arrived AS date_label,
+                   wh.notes AS notes
+            FROM warehouse wh JOIN variants v ON v.id = wh.variant_id
+            WHERE wh.order_number = ?
+        )
+        ORDER BY serial_number
+    """, (order_number, order_number)).fetchall()
+
+    # Checklists and warehouse photos keyed by warehouse_id
+    wh_ids = [r['warehouse_id'] for r in unit_rows if r['warehouse_id'] is not None]
+    checklist_by_wh = {}
+    wh_photos_by_wh = {}
+    if wh_ids:
+        ph = ','.join('?' * len(wh_ids))
+        cl_rows = conn.execute(
+            f"SELECT * FROM warehouse_checklist WHERE warehouse_id IN ({ph})", wh_ids
+        ).fetchall()
+        for r in cl_rows:
+            checklist_by_wh.setdefault(r['warehouse_id'], {})[r['item_key']] = bool(r['completed'])
+        wp_rows = conn.execute(
+            f"SELECT * FROM warehouse_photos WHERE warehouse_id IN ({ph}) ORDER BY id", wh_ids
+        ).fetchall()
+        for r in wp_rows:
+            wh_photos_by_wh.setdefault(r['warehouse_id'], []).append(dict(r))
+
+    units = []
+    for r in unit_rows:
+        u = dict(r)
+        wh_id = u.get('warehouse_id')
+        if wh_id is not None:
+            cl = checklist_by_wh.get(wh_id, {})
+            done = sum(1 for v in cl.values() if v)
+            u['checklist'] = [
+                {'key': key, 'label': label, 'checked': cl.get(key, False)}
+                for key, label in CHECKLIST_ITEMS
+            ]
+            u['checklist_done'] = done
+            u['checklist_total'] = len(CHECKLIST_ITEMS)
+            u['prep_photos'] = wh_photos_by_wh.get(wh_id, [])
+        else:
+            u['checklist'] = []
+            u['checklist_done'] = 0
+            u['checklist_total'] = 0
+            u['prep_photos'] = []
+        units.append(u)
+
+    # Order-level photos
+    photos = conn.execute(
+        "SELECT * FROM order_photos WHERE order_number=? ORDER BY id", (order_number,)
+    ).fetchall()
+
+    # Change orders with unit change log
+    change_orders = conn.execute(
+        "SELECT * FROM change_requests WHERE order_number=? ORDER BY id", (order_number,)
+    ).fetchall()
+    cr_ids = [cr['id'] for cr in change_orders]
+    unit_changes_by_cr = get_cr_unit_changes(conn, cr_ids)
+    co_list = []
+    for cr in change_orders:
+        raw_changes = unit_changes_by_cr.get(cr['id'], [])
+        groups = {}
+        for ch in raw_changes:
+            ts = ch['created_at'] or ''
+            groups.setdefault(ts, []).append(dict(ch))
+        co_list.append({
+            'id': cr['id'],
+            'status': cr['status'],
+            'created_at': cr['created_at'],
+            'created_by': cr['created_by'],
+            'swap_groups': [
+                {'timestamp': ts, 'changes': changes}
+                for ts, changes in sorted(groups.items())
+            ],
+        })
+
+    # Activity log
+    activity = conn.execute(
+        """SELECT full_name, username, action, detail, serial_number, created_at
+           FROM activity_log WHERE order_number=? ORDER BY id""",
+        (order_number,)
+    ).fetchall()
+
+    # Derive summary fields for the banner
+    customer = next((u['design_name'] for u in units), None)  # placeholder
+    so_meta = conn.execute(
+        "SELECT customer, fulfillment_type, MIN(date_allocated) AS date_allocated FROM sales_orders WHERE order_number=? GROUP BY order_number",
+        (order_number,)
+    ).fetchone()
+    wh_meta = conn.execute(
+        "SELECT customer, fulfillment_type, MIN(date_arrived) AS date_arrived FROM warehouse WHERE order_number=? GROUP BY order_number",
+        (order_number,)
+    ).fetchone()
+    customer = (so_meta and so_meta['customer']) or (wh_meta and wh_meta['customer']) or ''
+    fulfillment_type = (so_meta and so_meta['fulfillment_type']) or (wh_meta and wh_meta['fulfillment_type']) or ''
+    date_allocated = so_meta['date_allocated'] if so_meta else None
+    date_warehouse = wh_meta['date_arrived'] if wh_meta else None
+
+    # Pipeline stage
+    in_sales = bool(so_meta)
+    in_wh = bool(wh_meta)
+    if in_sales:
+        presale = conn.execute("""
+            SELECT 1 FROM sales_orders so WHERE so.order_number=?
+              AND so.container_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM units u WHERE u.container_id=so.container_id AND u.status='In Stock')
+            LIMIT 1
+        """, (order_number,)).fetchone()
+        stage = 'presale' if presale else 'allocated'
+    else:
+        statuses = [u['status'] for u in units if u['source'] == 'warehouse']
+        if all(s in ('Ready for Pickup', 'Ready for Delivery') for s in statuses):
+            stage = 'ready_delivery' if (fulfillment_type or '').lower() == 'delivery' else 'ready_pickup'
+        elif all(s == 'Pending Review' for s in statuses):
+            stage = 'pending_review'
+        else:
+            stage = 'in_prep'
+
+    # Timeline: stages with dates where known
+    timeline = [
+        {'key': 'allocated',      'label': 'Allocated',    'date': date_allocated},
+        {'key': 'in_prep',        'label': 'In Prep',      'date': date_warehouse},
+        {'key': 'pending_review', 'label': 'Pending Review','date': None},
+        {'key': 'ready',          'label': 'Ready',         'date': None},
+    ]
+    stage_order_keys = ['presale', 'allocated', 'in_prep', 'pending_review', 'ready_pickup', 'ready_delivery']
+    current_idx = stage_order_keys.index(stage) if stage in stage_order_keys else 1
+    tl_keys = ['allocated', 'in_prep', 'pending_review', 'ready']
+    tl_past = {'allocated': 1, 'in_prep': 2, 'pending_review': 3, 'ready_pickup': 4, 'ready_delivery': 4}
+    current_tl_level = tl_past.get(stage, 1)
+    for item in timeline:
+        level = tl_keys.index(item['key']) + 1
+        item['done'] = level < current_tl_level
+        item['current'] = level == current_tl_level
+
+    # Days in current stage
+    from datetime import date as _date
+    today = _date.today()
+    stage_start_str = date_warehouse if stage in ('in_prep', 'pending_review', 'ready_pickup', 'ready_delivery') else date_allocated
+    days_in_stage = None
+    if stage_start_str:
+        try:
+            stage_start = _date.fromisoformat(stage_start_str)
+            days_in_stage = (today - stage_start).days
+        except ValueError:
+            pass
+
+    # Container ETAs keyed by container_id
+    container_ids = list({u['container_id'] for u in units if u['container_id']})
+    container_etas = {}
+    if container_ids:
+        ph = ','.join('?' * len(container_ids))
+        for r in conn.execute(f"SELECT container_id, eta FROM containers WHERE container_id IN ({ph})", container_ids).fetchall():
+            container_etas[r['container_id']] = r['eta']
+    # Attach ETA to each unit
+    for u in units:
+        u['container_eta'] = container_etas.get(u['container_id']) if u['container_id'] else None
+
+    # First warehouse ID for the prep page link (#6)
+    first_wh = conn.execute(
+        "SELECT MIN(id) AS id FROM warehouse WHERE order_number=?", (order_number,)
+    ).fetchone()
+    first_wh_id = first_wh['id'] if first_wh else None
+
+    return {
+        'order_info': dict(order_info) if order_info else {},
+        'units': units,
+        'photos': [dict(p) for p in photos],
+        'change_orders': co_list,
+        'activity': [dict(a) for a in activity],
+        'customer': customer,
+        'fulfillment_type': fulfillment_type,
+        'date_allocated': date_allocated,
+        'date_warehouse': date_warehouse,
+        'stage': stage,
+        'timeline': timeline,
+        'unit_count': len(units),
+        'days_in_stage': days_in_stage,
+        'first_wh_id': first_wh_id,
+    }
+
+
+def upsert_order_details(conn, order_number, phone, email, address, city, state, zip_, notes):
+    conn.execute(
+        """INSERT OR REPLACE INTO order_details
+           (order_number, phone, email, address, city, state, zip, notes)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (order_number, phone, email, address, city, state, zip_, notes),
+    )
+    conn.commit()
+
+
+def add_order_photo(conn, order_number, filename, caption, uploaded_by):
+    conn.execute(
+        """INSERT INTO order_photos (order_number, filename, caption, uploaded_by)
+           VALUES (?,?,?,?)""",
+        (order_number, filename, caption, uploaded_by),
+    )
+    conn.commit()
+
+
+def delete_order_photo(conn, photo_id):
+    row = conn.execute(
+        "SELECT filename, order_number FROM order_photos WHERE id=?", (photo_id,)
+    ).fetchone()
+    conn.execute("DELETE FROM order_photos WHERE id=?", (photo_id,))
+    conn.commit()
+    return (row['filename'], row['order_number']) if row else (None, None)

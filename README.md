@@ -88,6 +88,8 @@ Each change request detail page shows:
 - Status tracking (Open → In Progress → Resolved) with resolution notes
 - Non-negotiables reminder
 
+Unit swap history (removed and added units) displays design, size, finish, swing, and glass type everywhere they appear — change request detail, warehouse alerts, and the pipeline order detail page.
+
 Active (unresolved) change requests for warehouse orders surface automatically on the Warehouse page.
 
 ### Activity Log (Admin)
@@ -113,6 +115,32 @@ Append-only audit trail at `/admin/activity`:
 - Confidence rating (High / Medium / Low / No data) based on days of sales history
 - Editable optimal counts saved directly to the DB
 
+### Sales Pipeline
+Visual kanban board at `/pipeline` (admin only) showing every order's position from Pre-Sale through fulfillment.
+
+**7 columns:**
+| Column | Stage |
+|---|---|
+| Pre-Sale | Container not yet arrived |
+| Allocated | Container arrived, unit in sales_orders |
+| In Prep | Unit in warehouse, being prepped |
+| Pending Review | All units ready, awaiting office approval |
+| Ready for Pickup | Approved pickup orders |
+| Ready for Delivery | Approved delivery orders |
+| Fulfilled | Completed orders (future) |
+
+**Pipeline cards** show order number, fulfillment badge, customer name, and allocation date. In Prep and beyond also show a color-coded checklist progress bar (red < 50%, orange 50–99%, green 100%). All cards are uniform height across columns.
+
+**Stage sidebar** — clicking into any order card opens a fixed full-height sidebar listing every other order in the same pipeline stage for fast lateral navigation without returning to the board.
+
+**Order detail page** (`/pipeline/<order_number>`) includes:
+- **3-zone banner**: order identity on the left, stat blocks in the center (units, fulfillment type, allocation date, warehouse date, days in stage with color warnings at 7d / 14d), stage pill on the right with a "View Prep →" link for warehouse orders
+- **Horizontal timeline**: 4-step progress indicator (Allocated → In Prep → Pending Review → Ready)
+- **Units table**: serial number + container tag + ETA, spec + collapsible 14-item QC checklist + prep photos, SKU, notes (yellow callout), status badge (shows "Allocated · In Stock" or "Allocated · Pre-Sale" for sales orders)
+- **Change Orders section**: all swaps logged against the order, grouped by timestamp, including swing and glass type on every removed/added unit
+- **Customer Contact**: name, phone, email, address (editable)
+- **Activity Log**: every action taken on the order with actor and timestamp
+
 ---
 
 ## Database Tables
@@ -126,6 +154,9 @@ Append-only audit trail at `/admin/activity`:
 | `warehouse_checklist` | 14-item QC checklist per unit |
 | `warehouse_photos` | Photos per unit |
 | `change_requests` | Customer change request log with scenario, procedure steps, and resolution |
+| `order_details` | Customer contact info (phone, email, address) per order |
+| `order_photos` | Photos attached directly to a pipeline order |
+| `containers` | Container ETAs keyed by container ID |
 | `users` | Auth — admin or warehouse role |
 | `activity_log` | Audit trail |
 

@@ -98,6 +98,8 @@
                                 <td style="text-align:center">
                                     {% if s.variance < 0 %}
                                         <span class="text-red font-bold">{{ s.variance }}</span>
+                                    {% elif s.variance > 0 %}
+                                        <span class="text-muted">+{{ s.variance }}</span>
                                     {% else %}
                                         <span class="text-muted">{{ s.variance }}</span>
                                     {% endif %}

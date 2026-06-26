@@ -1,0 +1,488 @@
+{% extends "base.html" %}
+
+{% block title %}New Change Order{% endblock %}
+{% block page_title %}New Change Order{% endblock %}
+
+{% block content %}
+<form method="POST" action="{{ url_for('change_request_create') }}">
+<input type="hidden" name="co_action"  id="coNewAction"     value="swap">
+<input type="hidden" name="old_serial"  id="coNewOldSerial">
+<input type="hidden" name="new_unit_id" id="coNewUnitId">
+<input type="hidden" name="swap_source" id="coNewSwapSource" value="sales">
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">
+
+<!-- ── Left column: CO details ── -->
+<div>
+
+    <!-- Order -->
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 14px;">Order</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div>
+                <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:4px;">Order Number</label>
+                <input type="text" name="order_number" value="{{ order_number }}" required
+                       placeholder="e.g. ORD-001"
+                       style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; font-family:monospace; outline:none;">
+            </div>
+            <div>
+                <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:4px;">Customer</label>
+                <input type="text" name="customer" value="{{ customer }}" required
+                       placeholder="Customer name"
+                       style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none;">
+            </div>
+        </div>
+        {% if order_info %}
+        <div style="margin-top:12px; padding:10px 12px; background:#F5F5F7; border-radius:8px; font-size:13px; color:#6E6E73;">
+            Current status: <strong style="color:#1D1D1F;">{{ order_info.label }}</strong>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Scenario -->
+    {% if auto_scenario %}
+    {% set s = scenarios[auto_scenario] %}
+    <input type="hidden" name="auto_scenario" value="{{ auto_scenario }}">
+    <div class="card" style="margin-bottom:16px; border-left:4px solid
+        {% if s.friction_level == 'low' %}#2E7D32{% elif s.friction_level == 'medium' %}#F57F17{% else %}#C62828{% endif %};">
+        <div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin-bottom:4px;">Scenario auto-detected</div>
+        <div style="font-size:16px; font-weight:700; color:#1D1D1F; margin-bottom:4px;">{{ auto_scenario }} — {{ s.title }}</div>
+        <span style="display:inline-block; padding:3px 10px; border-radius:20px; font-size:12px; font-weight:600;
+            background:{% if s.friction_level == 'low' %}#E8F5E9{% elif s.friction_level == 'medium' %}#FFF8E1{% else %}#FFEBEE{% endif %};
+            color:{% if s.friction_level == 'low' %}#2E7D32{% elif s.friction_level == 'medium' %}#F57F17{% else %}#C62828{% endif %};">
+            {{ s.status_label }}
+        </span>
+    </div>
+
+    {% elif needs_question == 'pickup' %}
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 12px;">One question</h3>
+        <p style="font-size:14px; color:#1D1D1F; margin:0 0 14px;">This order is marked <strong>Ready for Pickup</strong>. Has the customer already picked it up?</p>
+        <div style="display:flex; gap:10px;">
+            <label style="display:flex; align-items:center; gap:8px; padding:12px 16px; border:1.5px solid #D2D2D7; border-radius:8px; cursor:pointer; flex:1;" id="pickupNoLabel">
+                <input type="radio" name="pickup_departed" value="no" onchange="highlightPickup(this)">
+                <span style="font-size:14px; color:#1D1D1F;">No — still on-site</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; padding:12px 16px; border:1.5px solid #D2D2D7; border-radius:8px; cursor:pointer; flex:1;" id="pickupYesLabel">
+                <input type="radio" name="pickup_departed" value="yes" onchange="highlightPickup(this)">
+                <span style="font-size:14px; color:#1D1D1F;">Yes — customer has it</span>
+            </label>
+        </div>
+    </div>
+
+    {% elif needs_question == 'delivery' %}
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 12px;">A couple questions</h3>
+        <p style="font-size:14px; color:#1D1D1F; margin:0 0 14px;">This order is marked <strong>Ready for Delivery</strong>. Has it actually shipped?</p>
+        <div style="display:flex; gap:10px; margin-bottom:16px;">
+            <label style="display:flex; align-items:center; gap:8px; padding:12px 16px; border:1.5px solid #D2D2D7; border-radius:8px; cursor:pointer; flex:1;">
+                <input type="radio" name="shipment_departed" value="no" onchange="toggleCarrier(false)">
+                <span style="font-size:14px; color:#1D1D1F;">No — still on-site</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; padding:12px 16px; border:1.5px solid #D2D2D7; border-radius:8px; cursor:pointer; flex:1;">
+                <input type="radio" name="shipment_departed" value="yes" onchange="toggleCarrier(true)">
+                <span style="font-size:14px; color:#1D1D1F;">Yes — already shipped</span>
+            </label>
+        </div>
+        <div id="carrierQuestion" style="display:none;">
+            <p style="font-size:14px; color:#1D1D1F; margin:0 0 10px;">Which carrier type?</p>
+            <div style="display:flex; gap:10px;">
+                <label style="display:flex; align-items:center; gap:8px; padding:12px 16px; border:1.5px solid #D2D2D7; border-radius:8px; cursor:pointer; flex:1;">
+                    <input type="radio" name="carrier_type" value="ltl">
+                    <span style="font-size:14px; color:#1D1D1F;">LTL carrier</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; padding:12px 16px; border:1.5px solid #D2D2D7; border-radius:8px; cursor:pointer; flex:1;">
+                    <input type="radio" name="carrier_type" value="non-ltl">
+                    <span style="font-size:14px; color:#1D1D1F;">Non-LTL (UPS, FedEx, etc.)</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    {% else %}
+    <div class="card" style="margin-bottom:16px;">
+        <div style="padding:10px 12px; background:#FFF8E1; border-radius:8px; font-size:13px; color:#856404; margin-bottom:14px;">
+            Order not found in the system. Select the order's current location manually.
+        </div>
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 12px;">Where is the order now?</h3>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            {% for val, label in [
+                ('1A', 'Still in the warehouse — not yet shipped or picked up'),
+                ('1B', 'Already shipped via LTL carrier'),
+                ('1C', 'Already shipped via non-LTL carrier (UPS, FedEx, etc.)'),
+                ('1D', 'Already picked up or locally delivered'),
+            ] %}
+            <label style="display:flex; align-items:center; gap:10px; padding:12px 14px; border:1.5px solid #D2D2D7; border-radius:8px; cursor:pointer;">
+                <input type="radio" name="auto_scenario" value="{{ val }}" required>
+                <span style="font-size:14px; color:#1D1D1F;">{{ label }}</span>
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Request detail -->
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 14px;">Request Detail</h3>
+        <div style="margin-bottom:12px;">
+            <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:4px;">What is the customer requesting? <span style="color:#C62828;">*</span></label>
+            <textarea name="request_detail" rows="3" required
+                      placeholder="Describe the change the customer is requesting…"
+                      style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none; resize:vertical;"></textarea>
+        </div>
+        <div>
+            <label style="font-size:12px; font-weight:600; color:#6E6E73; display:block; margin-bottom:4px;">Internal Notes <span style="color:#8E8E93;">(optional)</span></label>
+            <textarea name="notes" rows="2"
+                      placeholder="Any context for the team…"
+                      style="width:100%; box-sizing:border-box; padding:9px 12px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:14px; outline:none; resize:vertical;"></textarea>
+        </div>
+    </div>
+
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <a href="{{ url_for('change_requests') }}" class="btn btn-secondary">Cancel</a>
+        <button type="submit" id="submitBtn" class="btn btn-primary">Create Change Order</button>
+    </div>
+</div>
+
+<!-- ── Right column: Unit swap ── -->
+<div>
+    <div class="card" style="position:sticky; top:20px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#6E6E73; margin:0 0 4px;">Swap Unit <span style="color:#8E8E93; font-weight:400; text-transform:none; letter-spacing:0;">(optional)</span></h3>
+        <p style="font-size:12px; color:#8E8E93; margin:0 0 14px;">Pick which unit to replace, then select the replacement below.</p>
+
+        {% if order_units %}
+
+        <!-- Action picker -->
+        <div style="display:flex; gap:6px; margin-bottom:14px;">
+            <button type="button" class="action-tab active" data-action="swap"   onclick="setAction('swap')">🔄 Swap Unit</button>
+            <button type="button" class="action-tab"        data-action="remove" onclick="setAction('remove')">➖ Remove Unit</button>
+            <button type="button" class="action-tab"        data-action="add"    onclick="setAction('add')">➕ Add Unit</button>
+        </div>
+        <style>
+        .action-tab { flex:1; padding:8px 6px; font-size:12px; font-weight:600; border:1.5px solid #D2D2D7; border-radius:8px; background:#fff; cursor:pointer; color:#6E6E73; transition:all .1s; }
+        .action-tab.active { border-color:#0071E3; background:#EFF6FF; color:#0071E3; }
+        </style>
+
+        <!-- Step: pick unit from order (swap + remove) -->
+        <div id="pickOldUnit">
+            <div style="font-size:12px; font-weight:600; color:#6E6E73; margin-bottom:8px;" id="pickOldLabel">Which unit is being replaced?</div>
+            {% for u in order_units %}
+            <label style="display:flex; align-items:center; gap:10px; padding:10px 12px; border:1.5px solid #D2D2D7; border-radius:8px; cursor:pointer; margin-bottom:6px; transition:border-color .1s;"
+                   onclick="selectOldUnit('{{ u.serial_number }}', '{{ u.source }}', this)">
+                <input type="radio" name="_old_unit_radio" value="{{ u.serial_number }}" style="flex-shrink:0;">
+                <div style="flex:1; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:2px;">
+                        <span style="font-size:13px; font-weight:600; color:#1D1D1F;">{{ u.design_name }} · {{ u.size }} · {{ u.finish }}</span>
+                        {% set st = u.status or '' %}
+                        <span style="font-size:11px; font-weight:600; padding:1px 8px; border-radius:20px; white-space:nowrap;
+                            {% if 'In Stock' in st %}background:#E8F5E9; color:#2E7D32;
+                            {% elif 'Pre-Sale' in st %}background:#FFF3CD; color:#856404;
+                            {% elif 'Awaiting' in st %}background:#FFEBEE; color:#C62828;
+                            {% elif st == 'In Prep' %}background:#E3F2FD; color:#1565C0;
+                            {% elif st in ('Ready for Pickup', 'Ready for Delivery') %}background:#E8F5E9; color:#2E7D32;
+                            {% elif st == 'Pending Review' %}background:#FFF3E0; color:#E65100;
+                            {% else %}background:#F5F5F7; color:#6E6E73;{% endif %}">
+                            {{ st }}
+                        </span>
+                    </div>
+                    <div style="font-size:12px; color:#6E6E73;">{{ u.swing }} · {{ u.glass_type }} &nbsp;·&nbsp; <span style="font-family:monospace;">{{ u.serial_number or '—' }}</span></div>
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        <!-- Replacement picker (swap + add) -->
+        <div id="step2" style="display:none;">
+            <div style="font-size:12px; font-weight:600; color:#6E6E73; margin-bottom:8px;" id="step2Label">Select replacement unit</div>
+            <div style="display:flex; gap:12px; margin-bottom:8px;">
+                <div style="display:flex; align-items:center; gap:5px; font-size:11px; color:#1D1D1F;">
+                    <span style="width:10px; height:10px; border-radius:2px; background:#D4EDDA; border:1px solid #28A745; display:inline-block;"></span> In Stock
+                </div>
+                <div style="display:flex; align-items:center; gap:5px; font-size:11px; color:#1D1D1F;">
+                    <span style="width:10px; height:10px; border-radius:2px; background:#FFF3CD; border:1px solid #FFC107; display:inline-block;"></span> Pre-Sale
+                </div>
+            </div>
+            <input type="text" id="cnSearch" placeholder="Filter by design, size, finish, serial…" oninput="filterCnUnits()"
+                   style="width:100%; box-sizing:border-box; padding:8px 11px; border:1.5px solid #D2D2D7; border-radius:8px; font-size:13px; outline:none; margin-bottom:8px;">
+            <div id="cnUnitList" style="max-height:300px; overflow-y:auto; border:1.5px solid #D2D2D7; border-radius:8px; background:#FAFAFA;"></div>
+            <p id="cnNoResults" style="display:none; font-size:13px; color:#6E6E73; text-align:center; padding:14px 0; margin:0;">No units match.</p>
+            <div id="cnPresaleWarning" style="display:none; margin-top:10px; padding:10px 12px; background:#FFF3E0; border:1.5px solid #FFB300; border-radius:8px; font-size:12px; color:#5D4037; line-height:1.5;">
+                <strong style="color:#E65100;">⚠ Pre-Sale Selected</strong> — Order will move back to Allocated until this unit's container arrives.
+            </div>
+            <div id="cnSelectedLabel" style="margin-top:8px; font-size:12px; color:#0071E3; font-weight:500;"></div>
+        </div>
+
+        <!-- FIFO warning -->
+        <div id="fifoWarning" style="display:none; margin-top:10px; padding:12px 14px; background:#FFF8E1; border:1.5px solid #FFB300; border-radius:8px; font-size:13px; color:#5D4037; line-height:1.6;">
+            <div style="font-weight:700; color:#E65100; margin-bottom:4px;">⚠ FIFO Order</div>
+            <div id="fifoMsg"></div>
+            <button type="button" onclick="switchToFifo()" id="fifoSwitchBtn"
+                    style="margin-top:8px; padding:6px 14px; background:#E65100; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">
+                Use Older Serial Instead
+            </button>
+        </div>
+
+        <!-- Remove confirmation -->
+        <div id="removeConfirm" style="display:none; margin-top:8px; padding:12px; background:#FFF5F5; border:1.5px solid #FFCDD2; border-radius:8px; font-size:13px; color:#C62828;">
+            The selected unit will be removed from this order and returned to inventory. No replacement will be added.
+        </div>
+
+        {% else %}
+        <div style="padding:16px; background:#F5F5F7; border-radius:8px; font-size:13px; color:#6E6E73; text-align:center;">
+            Enter an order number on the left to load units.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+</div><!-- end grid -->
+</form>
+
+<script>
+const CN_UNITS    = {{ available_units | tojson }};
+const ORDER_UNITS = {{ order_units | tojson }};
+const cnOpenVars  = new Set();
+let   cnSelectedId = null;
+let   fifoOlderSerial = null;
+let   fifoOlderSource = null;
+
+let currentAction = 'swap';
+
+function setAction(action) {
+    currentAction = action;
+    document.querySelectorAll('.action-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.action === action);
+    });
+
+    const pickOld      = document.getElementById('pickOldUnit');
+    const step2        = document.getElementById('step2');
+    const removeConf   = document.getElementById('removeConfirm');
+    const pickOldLabel = document.getElementById('pickOldLabel');
+    const step2Label   = document.getElementById('step2Label');
+    const submitBtn    = document.getElementById('submitBtn');
+
+    // Reset hidden fields
+    document.getElementById('coNewOldSerial').value = '';
+    document.getElementById('coNewUnitId').value    = '';
+    document.getElementById('cnSelectedLabel').textContent = '';
+    document.getElementById('cnPresaleWarning').style.display = 'none';
+    document.getElementById('fifoWarning').style.display = 'none';
+    fifoOlderSerial = null; fifoOlderSource = null;
+    document.querySelectorAll('[name=_old_unit_radio]').forEach(r => {
+        r.checked = false;
+        r.closest('label').style.borderColor = '#D2D2D7';
+    });
+
+    if (action === 'swap') {
+        pickOld.style.display    = '';
+        step2.style.display      = 'none';
+        removeConf.style.display = 'none';
+        pickOldLabel.textContent = 'Which unit is being replaced?';
+        submitBtn.textContent    = 'Create Change Order';
+        submitBtn.className      = 'btn btn-primary';
+    } else if (action === 'remove') {
+        pickOld.style.display    = '';
+        step2.style.display      = 'none';
+        removeConf.style.display = 'none';
+        pickOldLabel.textContent = 'Which unit is being removed?';
+        submitBtn.textContent    = 'Create Change Order';
+        submitBtn.className      = 'btn btn-primary';
+    } else if (action === 'add') {
+        pickOld.style.display    = 'none';
+        step2.style.display      = '';
+        removeConf.style.display = 'none';
+        step2Label.textContent   = 'Select unit to add to order';
+        submitBtn.textContent    = 'Create Change Order';
+        submitBtn.className      = 'btn btn-primary';
+        cnOpenVars.clear();
+        renderCnUnits(CN_UNITS);
+        setTimeout(() => document.getElementById('cnSearch').focus(), 50);
+    }
+
+    document.getElementById('coNewAction').value = action;
+}
+
+function checkFifo(serial) {
+    // Find the variant of the selected unit
+    const selected = ORDER_UNITS.find(u => u.serial_number === serial);
+    if (!selected) return;
+    // Find all units on the order with the same variant
+    const sameVariant = ORDER_UNITS.filter(u => u.variant_id === selected.variant_id && u.serial_number);
+    if (sameVariant.length < 2) {
+        document.getElementById('fifoWarning').style.display = 'none';
+        fifoOlderSerial = null; fifoOlderSource = null;
+        return;
+    }
+    // Sort by serial ascending (FIFO = smallest = oldest)
+    sameVariant.sort((a, b) => a.serial_number < b.serial_number ? -1 : 1);
+    const oldest = sameVariant[0];
+    if (oldest.serial_number !== serial) {
+        fifoOlderSerial = oldest.serial_number;
+        fifoOlderSource = oldest.source;
+        document.getElementById('fifoMsg').textContent =
+            `You selected ${serial}, but ${oldest.serial_number} is the older unit for this variant. ` +
+            `FIFO says the older unit should go first.`;
+        document.getElementById('fifoWarning').style.display = '';
+    } else {
+        document.getElementById('fifoWarning').style.display = 'none';
+        fifoOlderSerial = null; fifoOlderSource = null;
+    }
+}
+
+function switchToFifo() {
+    if (!fifoOlderSerial) return;
+    // Find and click the radio for the older serial
+    document.querySelectorAll('[name=_old_unit_radio]').forEach(r => {
+        if (r.value === fifoOlderSerial) {
+            const lbl = r.closest('label');
+            lbl.click();
+        }
+    });
+}
+
+function selectOldUnit(serial, source, labelEl) {
+    document.querySelectorAll('[name=_old_unit_radio]').forEach(r => {
+        r.closest('label').style.borderColor = '#D2D2D7';
+    });
+    labelEl.style.borderColor = '#0071E3';
+    document.getElementById('coNewOldSerial').value  = serial;
+    document.getElementById('coNewSwapSource').value = source;
+
+    checkFifo(serial);
+
+    if (currentAction === 'swap') {
+        document.getElementById('step2').style.display      = '';
+        document.getElementById('removeConfirm').style.display = 'none';
+        document.getElementById('step2Label').textContent   = 'Select replacement unit';
+        cnOpenVars.clear();
+        renderCnUnits(CN_UNITS);
+        setTimeout(() => document.getElementById('cnSearch').focus(), 50);
+    } else if (currentAction === 'remove') {
+        document.getElementById('step2').style.display      = 'none';
+        document.getElementById('removeConfirm').style.display = '';
+        const btn = document.getElementById('submitBtn');
+        btn.textContent = 'Create & Remove Unit';
+        btn.className   = 'btn btn-danger';
+    }
+}
+
+function cnVariantKey(u) {
+    return `${u.design_name}||${u.size}||${u.finish}||${u.swing}||${u.glass_type}`;
+}
+
+function cnGroupByVariant(units) {
+    const map = new Map();
+    units.forEach(u => {
+        const k = cnVariantKey(u);
+        if (!map.has(k)) map.set(k, { meta: u, inStock: [], preSale: [] });
+        if (u.status === 'In Stock') map.get(k).inStock.push(u);
+        else map.get(k).preSale.push(u);
+    });
+    return map;
+}
+
+function cnSelectUnit(u, rowEl) {
+    document.querySelectorAll('#cnUnitList .cn-serial-row').forEach(r => {
+        r.style.outline = 'none'; r.style.fontWeight = '400';
+    });
+    rowEl.style.outline = '2px solid #0071E3';
+    rowEl.style.fontWeight = '600';
+    document.getElementById('coNewUnitId').value = u.id;
+    cnSelectedId = u.id;
+    const isPresale = u.status !== 'In Stock';
+    document.getElementById('cnPresaleWarning').style.display = isPresale ? '' : 'none';
+    document.getElementById('cnSelectedLabel').textContent =
+        `Selected: ${u.design_name} · ${u.size} · ${u.serial_number || '—'}`;
+    const btn = document.getElementById('submitBtn');
+    if (currentAction === 'add') {
+        btn.textContent = isPresale ? 'Create & Add (Pre-Sale)' : 'Create & Add Unit';
+        btn.className   = 'btn btn-primary';
+    } else {
+        btn.textContent = isPresale ? 'Create & Move to Allocated' : 'Create & Swap Unit';
+        btn.className   = 'btn btn-primary';
+    }
+}
+
+function renderCnUnits(units) {
+    const list  = document.getElementById('cnUnitList');
+    const noRes = document.getElementById('cnNoResults');
+    list.innerHTML = '';
+    if (!units.length) { list.style.display = 'none'; noRes.style.display = ''; return; }
+    list.style.display = ''; noRes.style.display = 'none';
+
+    cnGroupByVariant(units).forEach((g, key) => {
+        const u    = g.meta;
+        const isOpen = cnOpenVars.has(key) || units.length <= 6;
+        const wrapper = document.createElement('div');
+        wrapper.style.borderBottom = '1px solid #E8E8ED';
+
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'display:flex; align-items:center; gap:8px; padding:10px 12px; cursor:pointer; background:#F5F5F7; user-select:none;';
+        hdr.innerHTML = `
+            <span class="cn-caret" style="font-size:10px; color:#6E6E73; display:inline-block; transform:${isOpen ? 'rotate(90deg)' : 'rotate(0deg)'}; transition:transform .15s;">&#9654;</span>
+            <span style="font-size:12px; font-weight:600; color:#1D1D1F; flex:1;">${u.design_name} <span style="font-weight:400;color:#6E6E73;">· ${u.size} · ${u.finish} · ${u.swing} · ${u.glass_type}</span></span>
+            <span style="font-size:11px; display:flex; gap:5px;">
+                ${g.inStock.length  ? `<span style="background:#D4EDDA;color:#155724;padding:1px 7px;border-radius:20px;">${g.inStock.length} in stock</span>` : ''}
+                ${g.preSale.length  ? `<span style="background:#FFF3CD;color:#856404;padding:1px 7px;border-radius:20px;">${g.preSale.length} pre-sale</span>` : ''}
+            </span>`;
+
+        const body = document.createElement('div');
+        body.style.display = isOpen ? '' : 'none';
+
+        hdr.addEventListener('click', () => {
+            const open = body.style.display !== 'none';
+            body.style.display = open ? 'none' : '';
+            hdr.querySelector('.cn-caret').style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+            open ? cnOpenVars.delete(key) : cnOpenVars.add(key);
+        });
+
+        [...g.inStock.map(u => ({ u, isPresale: false })),
+         ...g.preSale.map(u => ({ u, isPresale: true  }))
+        ].forEach(({ u, isPresale }) => {
+            const row = document.createElement('div');
+            row.className = 'cn-serial-row';
+            const bg = isPresale ? '#FFFDF0' : '#F6FFF8';
+            const dot = isPresale ? '#FFC107' : '#28A745';
+            const lbl = isPresale ? `Pre-Sale · ${u.container_id || 'TBD'}` : 'In Stock';
+            const lc  = isPresale ? '#856404' : '#155724';
+            row.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 12px 8px 32px;cursor:pointer;background:${bg};border-top:1px solid #F0F0F5;`;
+            row.innerHTML = `
+                <span style="width:8px;height:8px;border-radius:50%;background:${dot};flex-shrink:0;"></span>
+                <span style="font-family:monospace;font-size:12px;color:#1D1D1F;flex:1;">${u.serial_number || '—'}</span>
+                <span style="font-size:11px;font-weight:500;color:${lc};">${lbl}</span>`;
+            row.addEventListener('click', () => cnSelectUnit(u, row));
+            body.appendChild(row);
+        });
+
+        wrapper.appendChild(hdr);
+        wrapper.appendChild(body);
+        list.appendChild(wrapper);
+    });
+}
+
+function filterCnUnits() {
+    const q = document.getElementById('cnSearch').value.toLowerCase();
+    const filtered = q ? CN_UNITS.filter(u =>
+        u.design_name.toLowerCase().includes(q) ||
+        u.size.toLowerCase().includes(q) ||
+        u.finish.toLowerCase().includes(q) ||
+        u.swing.toLowerCase().includes(q) ||
+        u.glass_type.toLowerCase().includes(q) ||
+        (u.serial_number || '').toLowerCase().includes(q) ||
+        (u.container_id  || '').toLowerCase().includes(q)
+    ) : CN_UNITS;
+    if (q) filtered.forEach(u => cnOpenVars.add(cnVariantKey(u)));
+    renderCnUnits(filtered);
+}
+
+function toggleCarrier(show) {
+    document.getElementById('carrierQuestion').style.display = show ? '' : 'none';
+    if (!show) document.querySelectorAll('[name=carrier_type]').forEach(r => r.checked = false);
+}
+function highlightPickup(radio) {
+    document.getElementById('pickupNoLabel').style.borderColor  = '';
+    document.getElementById('pickupYesLabel').style.borderColor = '';
+    radio.closest('label').style.borderColor = '#0071E3';
+}
+</script>
+{% endblock %}
